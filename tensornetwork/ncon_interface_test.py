@@ -122,6 +122,21 @@ class NconTest(tf.test.TestCase):
     res_np = res_np.reshape((2, 2, 2))
     self.assertAllClose(res, res_np)
 
+  def test_ncon_network(self):
+    # `ncon_interface()` is mostly tested via `ncon()`, except for its
+    # `nodes` return value, which we check here.
+    a = np.random.randn(2, 2)
+    b = np.random.randn(2, 2, 2)
+    c = np.random.randn(2)
+    tensors = [a, b, c]
+    network, nodes, con_edges, out_edges = ncon_interface.ncon_network(
+      [a, b, c],
+      [(-1, 1), (1, -2, 2), (2,)]
+    )
+    for i in range(len(tensors)):
+      self.assertAllEqual(tensors[i], nodes[i].tensor.numpy())
+    self.assertEqual(set(nodes), network.nodes_set)
+
 
 if __name__ == '__main__':
   tf.test.main()

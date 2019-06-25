@@ -70,7 +70,7 @@ def ncon(tensors: Sequence[Tensor],
     Returns:
       A `Tensor` resulting from the contraction of the tensor network.
     """
-  tn, con_edges, out_edges = ncon_network(
+  tn, nodes, con_edges, out_edges = ncon_network(
       tensors, network_structure, con_order=con_order, out_order=out_order)
 
   # Contract assuming all edges connecting a given pair of nodes are adjacent
@@ -118,7 +118,7 @@ def ncon_network(
 
     If a contraction order `con_order` and an output order `out_order`
     are both provided, the edge labels can be anything.
-    Otherwise (`con_order == None or out_order == None`), the edge labels 
+    Otherwise (`con_order == None or out_order == None`), the edge labels
     must be integers and edges will be contracted in ascending order.
     Negative integers denote the (dangling) indices of the output tensor,
     which will be in descending order, e.g. [-1,-2,-3,...].
@@ -133,13 +133,14 @@ def ncon_network(
 
     Returns:
       net: `TensorNetwork` with the structure given by `network`.
+      nodes: List of `Node` objects in the same order as `tensors`.
       con_edges: List of internal `Edge` objects in contraction order.
       out_edges: List of dangling `Edge` objects in output order.
   """
   if len(tensors) != len(network_structure):
     raise ValueError('len(tensors) != len(network_structure)')
 
-  tn, edges = _build_network(tensors, network_structure)
+  tn, nodes, edges = _build_network(tensors, network_structure)
 
   if con_order is None:
     try:
@@ -189,7 +190,7 @@ def ncon_network(
           "Output edge {} appears more than once in the network.".format(
               str(e)))
 
-  return tn, con_edges, out_edges
+  return tn, nodes, con_edges, out_edges
 
 
 def _build_network(
@@ -215,4 +216,4 @@ def _build_network(
         # This will raise an error if the edges are not dangling.
         e = tn.connect(edges[edge_lbl], node[axis_num], name=str(edge_lbl))
         edges[edge_lbl] = e
-  return tn, edges
+  return tn, nodes, edges
