@@ -168,9 +168,14 @@ def ncon_network(
 
   try:
     con_edges = [edges[k] for k in con_order]
+  except KeyError as err:
+    raise ValueError("con_order contained an unknown edge label: {}".format(
+        err.args[0]))
+
+  try:
     out_edges = [edges[k] for k in out_order]
   except KeyError as err:
-    raise ValueError("Order contained an unknown edge label: {}".format(
+    raise ValueError("out_order contained an unknown edge label: {}".format(
         err.args[0]))
 
   if len(con_edges) + len(out_edges) != len(edges):
