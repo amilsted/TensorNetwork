@@ -129,7 +129,7 @@ class NconTest(tf.test.TestCase):
     b = np.random.randn(2, 2, 2)
     c = np.random.randn(2)
     tensors = [a, b, c]
-    network, nodes, con_edges, out_edges = ncon_interface.ncon_network(
+    network, nodes, _, _ = ncon_interface.ncon_network(
       [a, b, c],
       [(-1, 1), (1, -2, 2), (2,)]
     )

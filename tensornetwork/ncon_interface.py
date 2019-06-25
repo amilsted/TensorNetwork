@@ -92,11 +92,12 @@ def ncon(tensors: Sequence[Tensor],
         # If this already produces the final output, order the edges 
         # here to avoid transposes in some cases.
         tn.contract_between(
-            *nodes,
-            name="con({},{})".format(*nodes),
+            nodes[0], nodes[1],
+            name="con({},{})".format(nodes[0], nodes[1]),
             output_edge_order=out_edges)
       else:
-        tn.contract_between(*nodes, name="con({},{})".format(*nodes))
+        tn.contract_between(nodes[0], nodes[1], name="con({},{})".format(
+          nodes[0], nodes[1]))
       prev_nodes = nodes
 
   # TODO: More efficient ordering of products based on out_edges
