@@ -1610,7 +1610,8 @@ def optimize_binary_mera(ham_0,
                          numpy_update=True,
                          opt_all_layers=False,
                          opt_u_after=40,
-                         E_exact=-4 / np.pi):
+                         E_exact=-4 / np.pi,
+                         ham_avg_num_layers=0):
     """
     optimization of a scale invariant binary MERA tensor network
 
@@ -1630,6 +1631,9 @@ def optimize_binary_mera(ham_0,
         opt_u_after (int):          start optimizing disentangler only after `opt_u_after` initial optimization steps
         E_exact (float):            the exact ground-state energy (if known); default is the ground-state energy  of teh  
                                     infinite transverse field Ising model
+        ham_avg_num_layers:         Number of additional scale-invariant layers
+                                    through which to ascend the Hamiltonian
+                                    for the purposes of optimization.
     Returns: 
         wC (list of tf.Tensor):     optimized MERA isometries
         uC (list of tf.Tensor):     optimized MERA disentanglers
@@ -1692,6 +1696,13 @@ def optimize_binary_mera(ham_0,
         for p in range(len(wC)):
             if (not opt_all_layers) and skip_layer[p]:
                 continue
+
+            if p == len(wC) - 1 and ham_avg_num_layers > 0:
+                ham_asc = ham[p]
+                for i in range(ham_avg_num_layers):
+                    ham_asc = ascending_super_operator(ham_asc, wC[p], uC[p])
+                    ham[p] += ham_asc / 2**(i+1)
+
             if k >= opt_u_after:
                 uEnv = get_env_disentangler(ham[p], rho[p + 1], wC[p], uC[p])
                 if opt_u:
