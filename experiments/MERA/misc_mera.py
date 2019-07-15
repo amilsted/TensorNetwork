@@ -21,7 +21,7 @@ import tensorflow as tf
 import numpy as np
 import tensornetwork as tn
 
-@tf.contrib.eager.defun
+@tf.contrib.eager.defun(autograph=False)
 def trace(rho):
     """
     compute the trace of `rho`
@@ -35,7 +35,7 @@ def trace(rho):
     return out.get_tensor()
 
 
-@tf.contrib.eager.defun
+@tf.contrib.eager.defun(autograph=False)
 def symmetrize(rho):
     """
     impose reflection symmetry on `rho`
@@ -52,7 +52,7 @@ def symmetrize(rho):
 
 
 
-@tf.contrib.eager.defun
+@tf.contrib.eager.defun(autograph=False)
 def scalar_product(bottom, top):
     """
     calculate the Hilbert-schmidt inner product between `bottom` and `top'
