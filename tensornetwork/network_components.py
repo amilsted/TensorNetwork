@@ -31,6 +31,130 @@ Tensor = Any
 TensorNetwork = Any
 
 
+def get_shared_edges(node1: network_components.BaseNode,
+                     node2: network_components.BaseNode
+                    ) -> Set[network_components.Edge]:
+  """Get all edges shared between two nodes.
+
+  Args:
+    node1: The first node.
+    node2: The second node.
+
+  Returns:
+    A (possibly empty) `set` of `Edge`s shared by the nodes.
+  """
+  nodes = {node1, node2}
+  shared_edges = set()
+  # Assuming the network is well formed, all of the edges shared by
+  # these two nodes will be stored in just one of the nodes, so we only
+  # have to do this loop once.
+  for edge in node1.edges:
+    if set(edge.get_nodes()) == nodes:
+      shared_edges.add(edge)
+  return shared_edges
+
+
+def flatten_edges(edges: List[network_components.Edge],
+                  new_edge_name: Optional[Text] = None
+                 ) -> network_components.Edge:
+  """Flatten edges into single edge.
+
+  If two nodes have multiple edges connecting them, it may be
+  benifitial to flatten these edges into a single edge to avoid having several
+  unnecessary trace edges. This can speed up computation time and reduce
+  memory cost.
+
+  Warning: This will remove all axes names.
+
+  Args:
+    edges: A list of edges to flatten.
+    new_edge_name: Optional name to give to the newly created edge.
+
+  Returns:
+    The new flattened edge.
+
+  Raises:
+    ValueError: If edges is an empty list.
+    ValueError: If not all of the edges connect to the same node(s).
+    ValueError: If one of the nodes connecting to these edges does not have
+      edge definitions for all of its axes.
+  """
+  if not edges:
+    raise ValueError("At least 1 edge must be given.")
+  if len(edges) == 1:
+    return edges[0]  # Don't bother with reshaping.
+  # Set equality is transitive (a=b, b=c, therefore a=c) so it is only
+  # necessary to compare the first edge against the rest.
+  expected_nodes = set(edges[0].get_nodes())
+  for edge in edges:
+    if expected_nodes != set(edge.get_nodes()):
+      raise ValueError(
+          "Two edges do not share the same nodes. "
+          "'{}'s nodes: '{}', '{}'. '{}'s nodes: '{}', '{}'".format(
+              edges[0], edges[0].node1, edges[0].node2, edge, edge.node1,
+              edge.node2))
+  if len(expected_nodes) == 1:
+    return self._flatten_trace_edges(edges, new_edge_name)
+  # Flatten standard or dangling edges.
+  new_dangling_edges = []
+  for node in expected_nodes:
+    # Required for dangling case.
+    if node is None:
+      continue
+    perm_back = []
+    for edge in edges:
+      # There will only be 1 edge since we are in the standard edge case.
+      perm_back.append(node.edges.index(edge))
+    perm_front = sorted(set(range(len(node.edges))) - set(perm_back))
+    node.reorder_axes(perm_front + perm_back)
+    old_tensor_shape = self.backend.shape(node.tensor)
+    # Calculate the new axis dimension as a product of the other
+    # axes dimensions.
+    flattened_axis_dim = self.backend.prod(old_tensor_shape[len(perm_front):])
+    new_tensor_shape = self.backend.concat(
+        [old_tensor_shape[:len(perm_front)], [flattened_axis_dim]], axis=-1)
+    new_tensor = self.backend.reshape(node.tensor, new_tensor_shape)
+    # Modify the node in place. Currently, this is they only method that
+    # modifies a node's tensor.
+    node.tensor = new_tensor
+    # This Edge is required for the connect call later.
+    edge = network_components.Edge(new_edge_name, node, len(perm_front))
+    # Do not set the signature of 'edge' since it is dangling.
+    node.edges = node.edges[:len(perm_front)] + [edge]
+    new_dangling_edges.append(edge)
+    # TODO: Allow renaming of the new axis.
+    node.axis_names = [
+        self._new_edge_name(None) for _ in range(len(node.edges))
+    ]
+  node1, node2 = tuple(expected_nodes)
+  # Sets are returned in a random order, so this is how we deal with
+  # dangling edges.
+  if node1 is None or node2 is None:
+    return new_dangling_edges[0]
+  return self.connect(new_dangling_edges[0], new_dangling_edges[1],
+                      new_edge_name)
+
+
+def flatten_edges_between(node1: network_components.BaseNode,
+                          node2: network_components.BaseNode
+                         ) -> Optional[network_components.Edge]:
+  """Flatten all of the edges between the given two nodes.
+
+  Args:
+    node1: The first node.
+    node2: The second node.
+
+  Returns:
+    The flattened `Edge` object. If there was only one edge between the two
+      nodes, then the original edge is returned. If there where no edges
+      between the nodes, a None is returned.
+  """
+  shared_edges = self.get_shared_edges(node1, node2)
+  if shared_edges:
+    return self.flatten_edges(list(shared_edges))
+  return None
+
+
 class BaseNode(ABC):
   """Base class for nodes. Should be subclassed.
 
@@ -332,6 +456,71 @@ class BaseNode(ABC):
     if other.network is not self.network:
       raise ValueError("Cannot use '@' on nodes in different networks.")
     return self.network.contract_between(self, other)
+
+    if self.network is None:
+      # Trace edges cannot be contracted using tensordot.
+      if self is other:
+        flat_edge = self.flatten_edges_between(node1, node2)
+        if not flat_edge:
+          raise ValueError(
+              "No trace edges found on contraction of edges between "
+              "node '{}' and itself.".format(node1))
+        return self.contract(flat_edge, name)
+
+      shared_edges = self.get_shared_edges(node1, node2)
+      if not shared_edges:
+        if allow_outer_product:
+          return self.outer_product(node1, node2)
+        raise ValueError("No edges found between nodes '{}' and '{}' "
+                         "and allow_outer_product=False.".format(node1, node2))
+
+      # Collect the axis of each node corresponding to each edge, in order.
+      # This specifies the contraction for tensordot.
+      # NOTE: The ordering of node references in each contraction edge is ignored.
+      axes1 = []
+      axes2 = []
+      for edge in shared_edges:
+        if edge.node1 is node1:
+          axes1.append(edge.axis1)
+          axes2.append(edge.axis2)
+        else:
+          axes1.append(edge.axis2)
+          axes2.append(edge.axis1)
+
+      if output_edge_order:
+        # Determine heuristically if output transposition can be minimized by
+        # flipping the arguments to tensordot.
+        node1_output_axes = []
+        node2_output_axes = []
+        for (i, edge) in enumerate(output_edge_order):
+          if edge in shared_edges:
+            raise ValueError(
+                "Edge '{}' in output_edge_order is shared by the nodes to be "
+                "contracted: '{}' and '{}'.".format(edge, node1, node2))
+          edge_nodes = set(edge.get_nodes())
+          if node1 in edge_nodes:
+            node1_output_axes.append(i)
+          elif node2 in edge_nodes:
+            node2_output_axes.append(i)
+          else:
+            raise ValueError(
+                "Edge '{}' in output_edge_order is not connected to node '{}' or "
+                "node '{}'".format(edge, node1, node2))
+        if np.mean(node1_output_axes) > np.mean(node2_output_axes):
+          node1, node2 = node2, node1
+          axes1, axes2 = axes2, axes1
+
+      new_tensor = self.backend.tensordot(node1.tensor, node2.tensor,
+                                          [axes1, axes2])
+      new_node = self.add_node(new_tensor, name)
+      # The uncontracted axes of node1 (node2) now correspond to the first (last)
+      # axes of new_node. We provide this ordering to _remove_edges() via the
+      # node1 and node2 arguments.
+      self._remove_edges(shared_edges, node1, node2, new_node)
+
+      if output_edge_order:
+        new_node = new_node.reorder_edges(list(output_edge_order))
+      return new_node
 
   @property
   def edges(self):
