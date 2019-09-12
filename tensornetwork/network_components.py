@@ -829,84 +829,57 @@ class Edge:
     if (node2 is None) != (axis2 is None):
       raise ValueError(
           "node2 and axis2 must either be both None or both not be None")
+
+    self.disabled = False
     self.name = name
-    self._node1 = node1
-    self._axis1 = axis1
-    self._node2 = node2
-    self._axis2 = axis2
+    self.node1 = node1
+    self.axis1 = axis1
+    self.node2 = node2
+    self.axis2 = axis2
     self._is_dangling = node2 is None
     self._signature = -1
 
   def disable(self):
-    self._node1 = None
-    self._node2 = None
-
-  @property
-  def node1(self) -> BaseNode:
-    if not (self._node1 or self._node2):
-      raise ValueError(
-          'Edge has been disabled, accessing node1 is no longer possible')
-    return self._node1
-
-  @node1.setter
-  def node1(self, node1: BaseNode) -> None:
-    if not (self._node1 or self._node2):
-      raise ValueError(
-          'Edge has been disabled, setting node1 is no longer possible')
-    self._node1 = node1
-
-  @property
-  def node2(self) -> BaseNode:
-    if not (self._node1 or self._node2):
-      raise ValueError(
-          'Edge has been disabled, accessing node2 is no longer possible')
-    return self._node2
-
-  @node2.setter
-  def node2(self, node2: BaseNode) -> None:
-    if not (self._node1 or self._node2):
-      raise ValueError(
-          'Edge has been disabled, setting node2 is no longer possible')
-    self._node2 = node2
+    self.disabled = True
 
   @property
   def axis1(self):
-    if not (self._node1 or self._node2):
+    if self.disabled:
       raise ValueError(
           'Edge has been disabled, accessing axis1 is no longer possible')
     return self._axis1
 
   @axis1.setter
   def axis1(self, axis1: int) -> None:
-    if not (self._node1 or self._node2):
+    if self.disabled:
       raise ValueError(
           'Edge has been disabled, setting node1 is no longer possible')
     self._axis1 = axis1
 
   @property
   def axis2(self):
-    if not (self._node1 or self._node2):
+    if self.disabled:
       raise ValueError(
           'Edge has been disabled, accessing axis2 is no longer possible')
     return self._axis2
 
   @axis2.setter
   def axis2(self, axis2: int) -> None:
-    if not (self._node1 or self._node2):
+    if self.disabled:
       raise ValueError(
           'Edge has been disabled, setting node1 is no longer possible')
     self._axis2 = axis2
 
   @property
   def signature(self):
-    if not (self._node1 or self._node2):
+    if self.disabled:
       raise ValueError(
           'Edge has been disabled, accessing signature is no longer possible')
     return self._signature
 
   @signature.setter
   def signature(self, signature: int) -> None:
-    if not (self._node1 or self._node2):
+    if self.disabled:
       raise ValueError(
           'Edge has been disabled, setting node1 is no longer possible')
     self._signature = signature
@@ -948,6 +921,9 @@ class Edge:
 
   @property
   def node1(self) -> BaseNode:
+    if self.disabled:
+      raise ValueError(
+          'Edge has been disabled, accessing node1 is no longer possible')
     val = self._node1()
     if val is None:
       raise ValueError("node1 for edge '{}' no longer exists.".format(self))
@@ -955,19 +931,29 @@ class Edge:
 
   @property
   def node2(self) -> Optional[BaseNode]:
+    if self.disabled:
+      raise ValueError(
+          'Edge has been disabled, accessing node2 is no longer possible')
     if self._is_dangling:
       return None
     if self._node2() is None:
       raise ValueError("node2 for edge '{}' no longer exists.".format(self))
+
     return self._node2()
 
   @node1.setter
   def node1(self, node: BaseNode) -> None:
+    if self.disabled:
+      raise ValueError(
+          'Edge has been disabled, setting node1 is no longer possible')
     # pylint: disable=attribute-defined-outside-init
     self._node1 = weakref.ref(node)
 
   @node2.setter
   def node2(self, node: Optional[BaseNode]) -> None:
+    if self.disabled:
+      raise ValueError(
+          'Edge has been disabled, setting node2 is no longer possible')
     # pylint: disable=attribute-defined-outside-init
     self._node2 = weakref.ref(node) if node else None
     if node is None:
@@ -1092,8 +1078,7 @@ class Edge:
     axis2_num = node2.get_axis_number(self.axis2)
     new_edge1 = Edge(edge1_name, node1, axis1_num)
     new_edge2 = Edge(edge2_name, node2, axis2_num)
-
-    node1.add_edge(new_edge1, axis1_num)
-    node2.add_edge(new_edge2, axis2_num)
+    node1.add_edge(new_edge1, axis1_num, override=True)
+    node2.add_edge(new_edge2, axis2_num, override=True)
 
     self.disable()
