@@ -23,7 +23,8 @@ import numpy as np
 import weakref
 from abc import ABC, abstractmethod
 import h5py
-
+import tensornetwork
+global_backend = tensornetwork.global_backend
 
 string_type = h5py.special_dtype(vlen=str)
 Tensor = Any
@@ -212,7 +213,11 @@ class BaseNode(ABC):
       permutation.append(old_position)
       edge.update_axis(old_position, self, i, self)
     self.edges = edge_order[:]
-    self.tensor = self.network.backend.transpose(self.tensor, perm=permutation)
+    if isinstance(self, FreeNode):
+      self.tensor = global_backend.transpose(self.tensor, perm=permutation)
+    else:
+      self.tensor = self.network.backend.transpose(
+          self.tensor, perm=permutation)
     if self.axis_names is not None:
       # Update axis_names:
       tmp_axis_names = []
@@ -241,7 +246,10 @@ class BaseNode(ABC):
     if set(perm) != set(range(len(self.edges))):
       raise ValueError("A full permutation was not passed. "
                        "Permutation passed: {}".format(perm))
-    self.tensor = self.network.backend.transpose(self.tensor, perm=perm)
+    if isinstance(self, FreeNode):
+      self.tensor = global_backend.transpose(self.tensor, perm=perm)
+    else:
+      self.tensor = self.network.backend.transpose(self.tensor, perm=perm)
     tmp_edges = []
     for i, position in enumerate(perm):
       edge = self.edges[position]
@@ -329,7 +337,7 @@ class BaseNode(ABC):
       raise ValueError("Cannot use '@' on disabled node {}.".format(other.name))
     if self.network is None:
       raise ValueError("Cannot use '@' on disabled node {}.".format(self.name))
-    
+
     if other.network is not self.network:
       raise ValueError("Cannot use '@' on nodes in different networks.")
     return self.network.contract_between(self, other)
@@ -389,7 +397,6 @@ class BaseNode(ABC):
   def _load_node(cls, net: TensorNetwork, node_data: h5py.Group) -> "BaseNode":
     return
 
-
   @classmethod
   def _load_node_data(cls, node_data: h5py.Group) -> Tuple[Any, Any, Any, Any]:
     """Common method to enable adding nodes to a network based on hdf5 data.
@@ -420,11 +427,14 @@ class BaseNode(ABC):
     node_group.create_dataset('signature', data=self.signature)
     node_group.create_dataset('name', data=self.name)
     node_group.create_dataset('shape', data=self.shape)
-    node_group.create_dataset('axis_names', dtype=string_type,
-                              data=np.array(self.axis_names, dtype=object))
-    node_group.create_dataset('edges', dtype=string_type,
-                              data=np.array([edge.name for edge in self.edges],
-                                            dtype=object))
+    node_group.create_dataset(
+        'axis_names',
+        dtype=string_type,
+        data=np.array(self.axis_names, dtype=object))
+    node_group.create_dataset(
+        'edges',
+        dtype=string_type,
+        data=np.array([edge.name for edge in self.edges], dtype=object))
 
 
 class Node(BaseNode):
@@ -444,12 +454,11 @@ class Node(BaseNode):
   an arbitrary dimension.
   """
 
-  def __init__(
-      self, 
-      tensor: Tensor, 
-      name: Text, 
-      axis_names: List[Text],
-      network: Optional[TensorNetwork] = None) -> None:
+  def __init__(self,
+               tensor: Tensor,
+               name: Text,
+               axis_names: List[Text],
+               network: Optional[TensorNetwork] = None) -> None:
     """Create a node for the TensorNetwork.
 
     Args:
@@ -509,8 +518,8 @@ class Node(BaseNode):
     """
     name, signature, _, axis_names = cls._load_node_data(node_data)
     tensor = node_data['tensor'][()]
-    node = net.add_node(value=tensor, name=name,
-                        axis_names=[ax for ax in axis_names])
+    node = net.add_node(
+        value=tensor, name=name, axis_names=[ax for ax in axis_names])
     node.set_signature(signature)
     return node
 
@@ -642,10 +651,130 @@ class CopyNode(BaseNode):
       The added node.
     """
     name, signature, shape, axis_names = cls._load_node_data(node_data)
-    node = net.add_copy_node(name=name, axis_names=[ax for ax in axis_names],
-                             rank=len(shape), dimension=shape[0])
+    node = net.add_copy_node(
+        name=name,
+        axis_names=[ax for ax in axis_names],
+        rank=len(shape),
+        dimension=shape[0])
     node.set_signature(signature)
     return node
+
+
+class FreeNode(BaseNode):
+  """Node for the TensorNetwork graph.
+
+  A FreeNode represents a concrete tensor in a tensor network. The number of edges
+  for a node represents the rank of that tensor.
+
+  For example:
+
+  * A node with no edges means this node represents a scalar value.
+  * A node with a single edge means this node is a vector.
+  * A node with two edges represents a matrix.
+  * A node with three edges is a tensor of rank 3, etc.
+
+  Each node can have an arbitrary rank/number of edges, each of which can have
+  an arbitrary dimension.
+  """
+
+  def __init__(self,
+               tensor: Tensor,
+               name: Optional[Text] = None,
+               axis_names: Optional[List[Text]] = None,
+               network: Optional[TensorNetwork] = None) -> None:
+    """Create a node for the TensorNetwork.
+
+    Args:
+      tensor: The concrete tensor that is represented by this node. Can be
+        either a numpy array or a tensorflow tensor.
+      name: Name of the node. Used primarily for debugging.
+      axis_names: List of names for each of the tensor's axes.
+
+    Raises:
+      ValueError: If there is a repeated name in `axis_names` or if the length
+        doesn't match the shape of the tensor.
+    """
+
+    self._tensor = global_backend.convert_to_tensor(tensor)
+    if not axis_names:
+      axis_names = [str(n) for n in range(len(self.shape))]
+    super().__init__(name=name, axis_names=axis_names, network=None)
+
+  @property
+  def edges(self):
+    return self._edges
+
+  @property
+  def shape(self):
+    return global_backend.shape_tuple(self._tensor)
+
+  @property
+  def signature(self):
+    return self._signature
+
+  def get_tensor(self):
+    return self.tensor
+
+  @property
+  def tensor(self) -> Tensor:
+    return self._tensor
+
+  @tensor.setter
+  def tensor(self, tensor: Tensor) -> Tensor:
+    self._tensor = tensor
+
+  def set_tensor(self, tensor):
+    self.tensor = tensor
+
+  def _save_node(self, node_group: h5py.Group):
+    """Method to save a node to hdf5.
+
+    Args:
+      node_group: h5py group where data is saved
+    """
+    super()._save_node(node_group)
+    node_group.create_dataset('tensor', data=self._tensor)
+
+  @classmethod
+  def _load_node(cls, net: TensorNetwork, node_data: h5py.Group) -> "BaseNode":
+    """Add a node to a network based on hdf5 data.
+
+    Args:
+      net: The network the node will be added to
+      node_data: h5py group that contains the serialized node data
+
+    Returns:
+      The added node.
+    """
+    name, signature, _, axis_names = cls._load_node_data(node_data)
+    tensor = node_data['tensor'][()]
+    node = net.add_node(
+        value=tensor, name=name, axis_names=[ax for ax in axis_names])
+    node.set_signature(signature)
+    return node
+
+  def add_edge(self, edge: "Edge", axis: Union[int, Text]) -> None:
+    """Add an edge to the node on the given axis.
+
+    Args:
+      edge: The edge to add.
+      axis: The axis the edge points to.
+
+    Raises:
+      ValueError: If the edge on axis is not dangling.
+    """
+    axis_num = self.get_axis_number(axis)
+    if axis_num < 0 or axis_num >= len(self.shape):
+      raise ValueError("Axis must be positive and less than rank of the tensor")
+    self.edges[axis_num] = edge
+
+  def __matmul__(self, other: "BaseNode") -> "BaseNode":
+    if not hasattr(self, '_tensor'):
+      raise AttributeError("Please provide a valid tensor for this Node.")
+    if not isinstance(other, FreeNode):
+      raise TypeError("Cannot use '@' with type '{}'".format(type(other)))
+
+    return self.network.contract_between(self, other)
 
 
 class Edge:
@@ -701,12 +830,86 @@ class Edge:
       raise ValueError(
           "node2 and axis2 must either be both None or both not be None")
     self.name = name
-    self.node1 = node1
-    self.axis1 = axis1
-    self.node2 = node2
-    self.axis2 = axis2
+    self._node1 = node1
+    self._axis1 = axis1
+    self._node2 = node2
+    self._axis2 = axis2
     self._is_dangling = node2 is None
-    self.signature = -1
+    self._signature = -1
+
+  def disable(self):
+    self._node1 = None
+    self._node2 = None
+
+  @property
+  def node1(self) -> BaseNode:
+    if not (self._node1 or self._node2):
+      raise ValueError(
+          'Edge has been disabled, accessing node1 is no longer possible')
+    return self._node1
+
+  @node1.setter
+  def node1(self, node1: BaseNode) -> None:
+    if not (self._node1 or self._node2):
+      raise ValueError(
+          'Edge has been disabled, setting node1 is no longer possible')
+    self._node1 = node1
+
+  @property
+  def node2(self) -> BaseNode:
+    if not (self._node1 or self._node2):
+      raise ValueError(
+          'Edge has been disabled, accessing node2 is no longer possible')
+    return self._node2
+
+  @node2.setter
+  def node2(self, node2: BaseNode) -> None:
+    if not (self._node1 or self._node2):
+      raise ValueError(
+          'Edge has been disabled, setting node2 is no longer possible')
+    self._node2 = node2
+
+  @property
+  def axis1(self):
+    if not (self._node1 or self._node2):
+      raise ValueError(
+          'Edge has been disabled, accessing axis1 is no longer possible')
+    return self._axis1
+
+  @axis1.setter
+  def axis1(self, axis1: int) -> None:
+    if not (self._node1 or self._node2):
+      raise ValueError(
+          'Edge has been disabled, setting node1 is no longer possible')
+    self._axis1 = axis1
+
+  @property
+  def axis2(self):
+    if not (self._node1 or self._node2):
+      raise ValueError(
+          'Edge has been disabled, accessing axis2 is no longer possible')
+    return self._axis2
+
+  @axis2.setter
+  def axis2(self, axis2: int) -> None:
+    if not (self._node1 or self._node2):
+      raise ValueError(
+          'Edge has been disabled, setting node1 is no longer possible')
+    self._axis2 = axis2
+
+  @property
+  def signature(self):
+    if not (self._node1 or self._node2):
+      raise ValueError(
+          'Edge has been disabled, accessing signature is no longer possible')
+    return self._signature
+
+  @signature.setter
+  def signature(self, signature: int) -> None:
+    if not (self._node1 or self._node2):
+      raise ValueError(
+          'Edge has been disabled, setting node1 is no longer possible')
+    self._signature = signature
 
   def set_signature(self, signature: int) -> None:
     if self.is_dangling():
@@ -814,8 +1017,7 @@ class Edge:
     edge_group.create_dataset('name', data=self.name)
 
   @classmethod
-  def _load_edge(cls, edge_data: h5py.Group,
-                 nodes_dict: Dict[Text, BaseNode]):
+  def _load_edge(cls, edge_data: h5py.Group, nodes_dict: Dict[Text, BaseNode]):
     """Add an edge to a network based on hdf5 data.
 
     Args:
@@ -844,7 +1046,32 @@ class Edge:
     return edge
 
   def __xor__(self, other: "Edge") -> "Edge":
-    return self.node1.network.connect(self, other)
+    if isinstance(self.node1, FreeNode):
+      if self is other:
+        raise ValueError("Cannot connect edge '{}' to itself.".format(self))
+      if self.dimension != other.dimension:
+        raise ValueError("Cannot connect edges of unequal dimension. "
+                         "Dimension of edge '{}': {}, "
+                         "Dimension of edge '{}': {}.".format(
+                             self, other.dimension, other, other.dimension))
+      for edge in [self, other]:
+        if not edge.is_dangling():
+          raise ValueError("Edge '{}' is not a dangling edge. "
+                           "This edge points to nodes: '{}' and '{}'".format(
+                               edge, edge.node1, edge.node2))
+      node1 = self.node1
+      node2 = other.node1
+      axis1_num = node1.get_axis_number(self.axis1)
+      axis2_num = node2.get_axis_number(other.axis1)
+      new_edge = Edge(None, node1, axis1_num, node2, axis2_num)
+      # We don't touch the edges of node1 and node2.
+      # Instead we add the new edge to node1.connected_edges
+      # and node2.connected_edges
+      node1.add_edge(new_edge, axis1_num)
+      node2.add_edge(new_edge, axis2_num)
+      return new_edge
+    else:
+      return self.node1.network.connect(self, other)
 
   def __lt__(self, other):
     if not isinstance(other, Edge):
@@ -853,3 +1080,20 @@ class Edge:
 
   def __str__(self) -> Optional[Text]:
     return self.name
+
+  def break_edge(self, edge1_name: Text, edge2_name: Text) -> None:
+    """
+    Break an existing non-dangling edge
+    """
+    node1 = self.node1
+    node2 = self.node2
+
+    axis1_num = node1.get_axis_number(self.axis1)
+    axis2_num = node2.get_axis_number(self.axis2)
+    new_edge1 = Edge(edge1_name, node1, axis1_num)
+    new_edge2 = Edge(edge2_name, node2, axis2_num)
+
+    node1.add_edge(new_edge1, axis1_num)
+    node2.add_edge(new_edge2, axis2_num)
+
+    self.disable()
