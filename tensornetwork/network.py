@@ -23,12 +23,13 @@ from typing import Any, Sequence, List, Set, Optional, Union, Text, Tuple, Type,
 import numpy as np
 import weakref
 from tensornetwork import config
+from tensornetwork import network_utils
 from tensornetwork import network_components
 from tensornetwork.backends import backend_factory
 
-
 Tensor = Any
 string_type = h5py.special_dtype(vlen=str)
+
 
 class TensorNetwork:
   """Implementation of a TensorNetwork."""
@@ -97,8 +98,9 @@ class TensorNetwork:
     if conj:
       node_dict = {
           node: new_net.add_node(
-              self.backend.conj(node.tensor), name=node.name, axis_names=node.axis_names)
-          for node in self.nodes_set
+              self.backend.conj(node.tensor),
+              name=node.name,
+              axis_names=node.axis_names) for node in self.nodes_set
       }
     else:
       node_dict = {
@@ -812,15 +814,7 @@ class TensorNetwork:
     Returns:
       A (possibly empty) `set` of `Edge`s shared by the nodes.
     """
-    nodes = {node1, node2}
-    shared_edges = set()
-    # Assuming the network is well formed, all of the edges shared by
-    # these two nodes will be stored in just one of the nodes, so we only
-    # have to do this loop once.
-    for edge in node1.edges:
-      if set(edge.get_nodes()) == nodes:
-        shared_edges.add(edge)
-    return shared_edges
+    return network_utils.get_shared_edges(node1, node2)
 
   def get_parallel_edges(
       self, edge: network_components.Edge) -> Set[network_components.Edge]:

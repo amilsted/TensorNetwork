@@ -24,6 +24,7 @@ import weakref
 from abc import ABC, abstractmethod
 import h5py
 import tensornetwork
+import tensornetwork.network_utils as network_utils
 global_backend = tensornetwork.global_backend
 
 string_type = h5py.special_dtype(vlen=str)
@@ -696,9 +697,11 @@ class FreeNode(BaseNode):
     """
 
     self._tensor = global_backend.convert_to_tensor(tensor)
+
     if not axis_names:
       axis_names = [str(n) for n in range(len(self.shape))]
     super().__init__(name=name, axis_names=axis_names, network=None)
+    self.connected_edges = [None for n in range(len(self.shape))]
 
   @property
   def edges(self):
@@ -773,8 +776,6 @@ class FreeNode(BaseNode):
       raise AttributeError("Please provide a valid tensor for this Node.")
     if not isinstance(other, FreeNode):
       raise TypeError("Cannot use '@' with type '{}'".format(type(other)))
-
-    return self.network.contract_between(self, other)
 
 
 class Edge:
@@ -1032,32 +1033,40 @@ class Edge:
     return edge
 
   def __xor__(self, other: "Edge") -> "Edge":
-    if isinstance(self.node1, FreeNode):
-      if self is other:
-        raise ValueError("Cannot connect edge '{}' to itself.".format(self))
-      if self.dimension != other.dimension:
-        raise ValueError("Cannot connect edges of unequal dimension. "
-                         "Dimension of edge '{}': {}, "
-                         "Dimension of edge '{}': {}.".format(
-                             self, other.dimension, other, other.dimension))
-      for edge in [self, other]:
-        if not edge.is_dangling():
-          raise ValueError("Edge '{}' is not a dangling edge. "
-                           "This edge points to nodes: '{}' and '{}'".format(
-                               edge, edge.node1, edge.node2))
-      node1 = self.node1
-      node2 = other.node1
-      axis1_num = node1.get_axis_number(self.axis1)
-      axis2_num = node2.get_axis_number(other.axis1)
-      new_edge = Edge(None, node1, axis1_num, node2, axis2_num)
-      # We don't touch the edges of node1 and node2.
-      # Instead we add the new edge to node1.connected_edges
-      # and node2.connected_edges
-      node1.add_edge(new_edge, axis1_num)
-      node2.add_edge(new_edge, axis2_num)
-      return new_edge
-    else:
-      return self.node1.network.connect(self, other)
+    return network_utils.connect(self, other)
+    # for edge in [self, other]:
+    #   if not edge.is_dangling():
+    #     raise ValueError("Edge '{}' is not a dangling edge. "
+    #                      "This edge points to nodes: '{}' and '{}'".format(
+    #                          edge, edge.node1, edge.node2))
+    # if self is other:
+    #   raise ValueError("Cannot connect and edge '{}' to itself.".format(self))
+
+    # if self.dimension != other.dimension:
+    #   raise ValueError("Cannot connect edges of unequal dimension. "
+    #                    "Dimension of edge '{}': {}, "
+    #                    "Dimension of edge '{}': {}.".format(
+    #                        self, other.dimension, other, other.dimension))
+
+    # if isinstance(self.node1, FreeNode) and isinstance(other.node1, FreeNode):
+    #   node1 = self.node1
+    #   node2 = other.node1
+    #   axis1_num = node1.get_axis_number(self.axis1)
+    #   axis2_num = node2.get_axis_number(other.axis1)
+    #   new_edge = Edge(None, node1, axis1_num, node2, axis2_num)
+    #   #we're not touching .edges; instead we're inserting
+    #   #`new_edge` into `node1.connected_edges` and `node2.connected_edges`
+    #   node1.connected_edges[axis1_num] = new_edge
+    #   node2.connected_edges[axis2_num] = new_edge
+    #   return new_edge
+
+    # elif (
+    #     isinstance(self.node1, FreeNode) != isinstance(other.node1, FreeNode)):
+    #   raise TypeError(
+    #       "Only nodes with same types can be connected. Got nodes with "
+    #       "different types type(node1) = {} and type(node2) = {}.".format(
+    #           type(self.node1), type(other.node1)))
+    # return self.node1.network.connect(self, other)
 
   def __lt__(self, other):
     if not isinstance(other, Edge):
@@ -1067,9 +1076,13 @@ class Edge:
   def __str__(self) -> Optional[Text]:
     return self.name
 
-  def break_edge(self, edge1_name: Text, edge2_name: Text) -> None:
+  def break_edge(self, edge1_name: Text,
+                 edge2_name: Text) -> Tuple[BaseNode, BaseNode]:
     """
-    Break an existing non-dangling edge
+    Break an existing non-dangling edge.
+    This updates both Edge.node1 and Edge.node2 by removing the 
+    connecting edge from `Edge.node1.edges` and `Edge.node2.edges`
+    and adding new dangling edges instead
     """
     node1 = self.node1
     node2 = self.node2
@@ -1080,5 +1093,5 @@ class Edge:
     new_edge2 = Edge(edge2_name, node2, axis2_num)
     node1.add_edge(new_edge1, axis1_num, override=True)
     node2.add_edge(new_edge2, axis2_num, override=True)
-
     self.disable()
+    return new_edge1, new_edge2
