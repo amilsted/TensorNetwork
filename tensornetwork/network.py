@@ -1519,7 +1519,6 @@ def contract(edge: network_components.Edge,
   if isinstance(edge.node1, network_components.FreeNode) and isinstance(
       edge.node2, network_components.FreeNode):
     new_node = network_components.FreeNode(new_tensor, name=name)
-    #update new_node to matc
     _remove_edges(
         set([edge]), edge.node1, edge.node2, new_node, add_new_edges=True)
     return new_node
@@ -1567,8 +1566,11 @@ def outer_product(node1: network_components.BaseNode,
 
   new_tensor = backend.outer_product(node1.tensor, node2.tensor)
   override = False
+  node1_axis_names = node1.axis_names
+  node2_axis_names = node2.axis_names
   if isinstance(node1, network_components.FreeNode) and isinstance(
       node2, network_components.FreeNode):
+
     new_node = network_components.FreeNode(new_tensor, name=name)
     override = True
   elif isinstance(node1, network_components.FreeNode) != isinstance(
@@ -1579,13 +1581,17 @@ def outer_product(node1: network_components.BaseNode,
             type(edge1.node1), type(edge2.node1)))
   elif isinstance(node1, network_components.Node) and isinstance(
       node2, network_components.Node):
-
     if not net:
       raise ValueError("in `contract`: trying to contract a `Node`, "
                        " but no `TensorNetwork` object has been passed.")
     new_node = net.add_node(new_tensor, name)
+  else:
+    raise ValueError("found type(node1)+{} and type(node2)={}"
+                     "This case is not supported".format(
+                         type(node1), type(node2)))
 
   additional_axes = len(node1.tensor.shape)
+
   for i, edge in enumerate(node1.edges):
     edge.update_axis(i, node1, i, new_node)
   for i, edge in enumerate(node2.edges):
@@ -1593,6 +1599,12 @@ def outer_product(node1: network_components.BaseNode,
 
   for i, edge in enumerate(node1.edges + node2.edges):
     new_node.add_edge(edge, i, override)
+
+  if isinstance(node1, network_components.FreeNode) and isinstance(
+      node2, network_components.FreeNode):
+    node1.fresh_edges(node1_axis_names)
+    node2.fresh_edges(node2_axis_names)
+
   return new_node
 
 
