@@ -1110,26 +1110,12 @@ class Edge:
     new_edge2 = Edge(edge2_name, node2, axis2_num)
     node1.add_edge(new_edge1, axis1_num, override=True)
     node2.add_edge(new_edge2, axis2_num, override=True)
-    #self.disable()
     return new_edge1, new_edge2
 
   def __truediv__(self, other: "Edge") -> "Edge":
     """
     Break apart two edges if they are connected
     """
-    if self.is_dangling():
-      node1 = self.node1
-      axis1_num = node1.get_axis_number(self.axis1)
-      edge1 = node1.edges[axis1_num]
-    else:
-      edge1 = self
-    if other.is_dangling():
-      node2 = other.node1
-      axis2_num = node2.get_axis_number(other.axis1)
-      edge2 = node2.edges[axis2_num]
-    else:
-      edge2 = other
-
-    if edge1 is not edge2:
+    if self is not other:
       raise ValueError('Cannot break two unconnected edges')
-    return edge1.break_edge('__Edge__', '__Edge__')
+    return edge1.disconnect('__Edge__', '__Edge__')
