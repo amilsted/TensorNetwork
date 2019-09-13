@@ -814,6 +814,14 @@ class FreeNode(BaseNode):
       raise TypeError("Cannot use '@' with type '{}'".format(type(other)))
     return tensor_network.contract_between(self, other, self.backend)
 
+  def fresh_edges(self, axis_names: Optional[List[Text]] = None):
+    new_edges = []
+    if not axis_names:
+      axis_names = self.axis_names
+    for i, edge in enumerate(self.edges):
+      new_edge = Edge(self.axis_names[i], node1=self, axis1=i)
+      self.add_edge(new_edge, i, True)
+
 
 class Edge:
   """Edge for the TensorNetwork graph.
