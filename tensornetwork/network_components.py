@@ -55,7 +55,7 @@ class BaseNode(ABC):
   def __init__(self,
                name: Optional[Text] = None,
                axis_names: Optional[List[Text]] = None,
-               network: Optional[TensorNetwork] = None,
+               backend: Optional["Backend"] = None,
                shape: Optional[Tuple[int]] = None) -> None:
     """Create a node for the TensorNetwork. Should be subclassed before usage
     and a limited number of abstract methods and properties implemented.
@@ -70,8 +70,9 @@ class BaseNode(ABC):
       ValueError: If there is a repeated name in `axis_names` or if the length
         doesn't match the shape of the tensor.
     """
+    self.is_disabled = False
     self.name = name
-    self.network = network
+    self.backend = backend
     self._shape = shape
     if axis_names is not None:
       self._edges = [
@@ -218,8 +219,7 @@ class BaseNode(ABC):
     if isinstance(self, FreeNode):
       self.tensor = self.backend.transpose(self.tensor, perm=permutation)
     else:
-      self.tensor = self.network.backend.transpose(
-          self.tensor, perm=permutation)
+      self.tensor = self.backend.transpose(self.tensor, perm=permutation)
     if self.axis_names is not None:
       # Update axis_names:
       tmp_axis_names = []
@@ -251,7 +251,7 @@ class BaseNode(ABC):
     if isinstance(self, FreeNode):
       self.tensor = self.backend.transpose(self.tensor, perm=perm)
     else:
-      self.tensor = self.network.backend.transpose(self.tensor, perm=perm)
+      self.tensor = self.backend.transpose(self.tensor, perm=perm)
     tmp_edges = []
     for i, position in enumerate(perm):
       edge = self.edges[position]
@@ -338,18 +338,17 @@ class BaseNode(ABC):
       raise AttributeError("Please provide a valid tensor for this Node.")
     if not isinstance(other, BaseNode):
       raise TypeError("Cannot use '@' with type '{}'".format(type(other)))
-    if other.network is None:
-      raise ValueError("Cannot use '@' on disabled node {}.".format(other.name))
-    if self.network is None:
+    # if other.network is None:
+    #   raise ValueError("Cannot use '@' on disabled node {}.".format(other.name))
+    if self.is_disabled:
       raise ValueError("Cannot use '@' on disabled node {}.".format(self.name))
-
-    if other.network is not self.network:
-      raise ValueError("Cannot use '@' on nodes in different networks.")
-    return self.network.contract_between(self, other)
+    # if other.network is not self.network:
+    #   raise ValueError("Cannot use '@' on nodes in different networks.")
+    return tensor_network.contract_between(self, other, self.backend)
 
   @property
   def edges(self):
-    if self.network is None:
+    if self.is_disabled:
       raise ValueError('Node {} has been disabled. '
                        'Accessing its edges is no longer possible'.format(
                            self.name))
@@ -357,7 +356,7 @@ class BaseNode(ABC):
 
   @edges.setter
   def edges(self, edges: List):
-    if self.network is None:
+    if self.is_disabled:
       raise ValueError('Node {} has been disabled.'
                        'Assigning edges is no longer possible'.format(
                            self.name))
@@ -376,7 +375,7 @@ class BaseNode(ABC):
 
   @property
   def signature(self):
-    if self.network is None:
+    if self.is_disabled:
       raise ValueError('Node {} has been disabled. '
                        'Accessing its signature is no longer possible'.format(
                            self.name))
@@ -384,20 +383,20 @@ class BaseNode(ABC):
 
   @signature.setter
   def signature(self, signature: int):
-    if self.network is None:
+    if self.is_disabled:
       raise ValueError('Node {} has been disabled. '
                        'Assigning a signature is no longer possible'.format(
                            self.name))
     self._signature = signature
 
   def disable(self):
-    if self.network is None:
+    if self.is_disabled:
       raise ValueError('Node {} is already disabled'.format(self.name))
-    if self in self.network.nodes_set:
-      raise ValueError(
-          'Node {} is part of a network. Disabelling not allowed'.format(
-              self.name))
-    self.network = None
+    # if self in self.network.nodes_set:
+    #   raise ValueError(
+    #       'Node {} is part of a network. Disabelling not allowed'.format(
+    #           self.name))
+    self.is_disabled = True
 
   @classmethod
   @abstractmethod
@@ -463,9 +462,10 @@ class Node(BaseNode):
 
   def __init__(self,
                tensor: Tensor,
-               name: Text,
-               axis_names: List[Text],
-               network: Optional[TensorNetwork] = None) -> None:
+               name: Optional[Text] = None,
+               axis_names: Optional[List[Text]] = None,
+               backend: Optional[Text] = None,
+               dtype: Optional[Type[np.number]] = None) -> None:
     """Create a node for the TensorNetwork.
 
     Args:
@@ -479,8 +479,21 @@ class Node(BaseNode):
       ValueError: If there is a repeated name in `axis_names` or if the length
         doesn't match the shape of the tensor.
     """
-    self._tensor = tensor
-    super().__init__(name=name, axis_names=axis_names, network=network)
+    if dtype is None:
+      dtype = config.default_dtype
+    # backend.dtype is initialized from config.py (currently `None`)
+    # if `backend.dtype = None`, the backend dtype is set to the type
+    # of `tensor`.
+    if backend is None:
+      backend = config.default_backend
+    backend_ = backend_factory.get_backend(backend, dtype)
+    self._tensor = backend_.convert_to_tensor(tensor)
+    super().__init__(name=name, axis_names=axis_names, backend=backend_)
+
+    if not self.backend.dtype:
+      self.backend.dtype = self._tensor.dtype
+    if not axis_names:
+      axis_names = [str(n) for n in len(self.shape)]
 
   def get_tensor(self):
     return self.tensor
@@ -490,10 +503,10 @@ class Node(BaseNode):
 
   @property
   def shape(self):
-    if self.network is not None:
-      return self.network.backend.shape_tuple(self._tensor)
-    raise ValueError('Node {} has been disabled. '
-                     'Access its shape via self.tensor'.format(self.name))
+    if self.is_disabled:
+      raise ValueError('Node {} has been disabled. '
+                       'Access its shape via self.tensor'.format(self.name))
+    return self.backend.shape_tuple(self._tensor)
 
   @property
   def tensor(self) -> Tensor:
@@ -538,7 +551,7 @@ class CopyNode(BaseNode):
                dimension: int,
                name: Optional[Text] = None,
                axis_names: Optional[List[Text]] = None,
-               network: Optional[TensorNetwork] = None,
+               backend: Optional["Backend"] = None,
                dtype: Type[np.number] = np.float64) -> None:
 
     self.rank = rank
@@ -546,7 +559,11 @@ class CopyNode(BaseNode):
     self.dtype = dtype
     self._tensor = None
 
-    super().__init__(name, axis_names, network, shape=(dimension,) * rank)
+    super().__init__(
+        name=name,
+        axis_names=axis_names,
+        backend=backend,
+        shape=(dimension,) * rank)
 
   def get_tensor(self):
     return self.tensor
@@ -562,7 +579,7 @@ class CopyNode(BaseNode):
   def tensor(self) -> Tensor:
     if self._tensor is None:
       copy_tensor = self.make_copy_tensor(self.rank, self.dimension, self.dtype)
-      self._tensor = self.network.backend.convert_to_tensor(copy_tensor)
+      self._tensor = self.backend.convert_to_tensor(copy_tensor)
     return self._tensor
 
   @tensor.setter
@@ -635,7 +652,7 @@ class CopyNode(BaseNode):
     partners = self.get_partners()
     einsum_expression = self._make_einsum_expression(partners)
     tensors = [partner.get_tensor() for partner in partners]
-    return self.network.backend.einsum(einsum_expression, *tensors)
+    return self.backend.einsum(einsum_expression, *tensors)
 
   # pylint: disable=W0235
   def _save_node(self, node_group: h5py.Group):
@@ -665,154 +682,6 @@ class CopyNode(BaseNode):
         dimension=shape[0])
     node.set_signature(signature)
     return node
-
-
-class FreeNode(BaseNode):
-  """Node for the TensorNetwork graph.
-
-  A FreeNode represents a concrete tensor in a tensor network. The number of edges
-  for a node represents the rank of that tensor.
-
-  For example:
-
-  * A node with no edges means this node represents a scalar value.
-  * A node with a single edge means this node is a vector.
-  * A node with two edges represents a matrix.
-  * A node with three edges is a tensor of rank 3, etc.
-
-  Each node can have an arbitrary rank/number of edges, each of which can have
-  an arbitrary dimension.
-  """
-
-  def __init__(self,
-               tensor: Tensor,
-               name: Optional[Text] = None,
-               axis_names: Optional[List[Text]] = None,
-               backend: Optional[Text] = None,
-               dtype: Optional[Type[np.number]] = None) -> None:
-    """Create a node for the TensorNetwork.
-
-    Args:
-      tensor: The concrete tensor that is represented by this node. Can be
-        either a numpy array or a tensorflow tensor.
-      name: Name of the node. Used primarily for debugging.
-      axis_names: List of names for each of the tensor's axes.
-      backend (str): name of the backend. Currently supported 
-                     backends are 'numpy', 'tensorflow', 'pytorch', 'jax', 'shell'
-      dtype: dtype of the backend of network. If `None`, no dtype checks 
-             are performed. Default value is `None`. For backend 
-             initialization functions like `zeros`, `ones`, `randn` a 
-             dtype of `None` defaults to float64
-
-    Raises:
-      ValueError: If there is a repeated name in `axis_names` or if the length
-        doesn't match the shape of the tensor.
-    """
-    if backend is None:
-      backend = config.default_backend
-    if dtype is None:
-      dtype = config.default_dtype
-    # backend.dtype is initialized from config.py (currently `None`)
-    # if `backend.dtype = None`, the backend dtype is set to the type
-    # of `tensor`.
-    self.backend = backend_factory.get_backend(backend, dtype)
-    self._tensor = self.backend.convert_to_tensor(tensor)
-    if not self.backend.dtype:
-      self.backend.dtype = self._tensor.dtype
-
-    if not axis_names:
-      axis_names = [str(n) for n in range(len(self.shape))]
-    super().__init__(name=name, axis_names=axis_names, network=None)
-
-  @overload
-  def __getitem__(self, key: slice) -> List["Edge"]:
-    pass
-
-  @overload
-  def __getitem__(self, key: Union[int, Text]) -> "Edge":
-    pass
-
-  def __getitem__(self,
-                  key: Union[int, Text, slice]) -> Union["Edge", List["Edge"]]:
-    if isinstance(key, slice):
-      raise ValueError('`FreeNode` does not support slicing')
-
-    return self.get_edge(key)
-
-  def get_edge(self, axis: Union[int, Text]) -> "Edge":
-    axis_num = self.get_axis_number(axis)
-    if not self.edges[axis_num].is_dangling():
-      return Edge(self.edges[axis_num].name, self, axis_num)
-
-    return self.edges[axis_num]
-
-  @property
-  def dtype(self):
-    return self.backend.dtype
-
-  @property
-  def edges(self):
-    return self._edges
-
-  @edges.setter
-  def edges(self, edges):
-    self._edges = edges
-
-  @property
-  def shape(self):
-    return self.backend.shape_tuple(self._tensor)
-
-  @property
-  def signature(self):
-    return self._signature
-
-  def get_tensor(self):
-    return self.tensor
-
-  @property
-  def tensor(self) -> Tensor:
-    return self._tensor
-
-  @tensor.setter
-  def tensor(self, tensor: Tensor) -> Tensor:
-    self._tensor = tensor
-
-  def set_tensor(self, tensor):
-    self.tensor = tensor
-
-  def _save_node(self, node_group: h5py.Group):
-    """Method to save a node to hdf5.
-
-    Args:
-      node_group: h5py group where data is saved
-    """
-    super()._save_node(node_group)
-    node_group.create_dataset('tensor', data=self._tensor)
-
-  @classmethod
-  def _load_node(cls, net: TensorNetwork, node_data: h5py.Group) -> "BaseNode":
-    """Add a node to a network based on hdf5 data.
-
-    Args:
-      net: The network the node will be added to
-      node_data: h5py group that contains the serialized node data
-
-    Returns:
-      The added node.
-    """
-    name, signature, _, axis_names = cls._load_node_data(node_data)
-    tensor = node_data['tensor'][()]
-    node = net.add_node(
-        value=tensor, name=name, axis_names=[ax for ax in axis_names])
-    node.set_signature(signature)
-    return node
-
-  def __matmul__(self, other: "BaseNode") -> "BaseNode":
-    if not hasattr(self, '_tensor'):
-      raise AttributeError("Please provide a valid tensor for this Node.")
-    if not isinstance(other, FreeNode):
-      raise TypeError("Cannot use '@' with type '{}'".format(type(other)))
-    return tensor_network.contract_between(self, other, self.backend)
 
   def fresh_edges(self, axis_names: Optional[List[Text]] = None):
     new_edges = []

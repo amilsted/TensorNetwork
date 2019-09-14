@@ -1,4 +1,4 @@
-from tensornetwork.network_components import Edge, BaseNode, FreeNode
+from tensornetwork.network_components import Edge, BaseNode
 from tensornetwork import network
 from tensornetwork import TensorNetwork
 from typing import Text, Sequence, Optional, List, Union
@@ -11,9 +11,8 @@ def check_node_attributes(node1, node2):
           node, type(node)))
 
   if node1.backend.name != node2.backend.name:
-    raise ValueError(
-        'node {}  and node {} have different backends. Cannot perform a contraction'
-        .format(node1, node2))
+    raise ValueError("node {}  and node {} have different backends. "
+                     "Cannot perform a contraction".format(node1, node2))
 
 
 def contract(edge: Edge, name: Optional[Text] = None) -> BaseNode:
@@ -27,15 +26,20 @@ def contract(edge: Edge, name: Optional[Text] = None) -> BaseNode:
     The new node created after the contraction.
 
   Raises:
-    ValueError: When edge is a dangling edge or if it already has been
+    ValueError: If edge has no nodes
+    ValueError: If edge is a dangling edge or if it already has been
       contracted.
+    ValueError: If backends of the edge.node1 and edge.node2 are different
+      contracted.
+    TypeError: If edge.node1 and edge.node2 are different have no 
+      `backend` attribute
   """
   check_node_attributes(edge.node1, edge.node2)
   if edge.node1:
     backend = edge.node1.backend
   else:
-    raise ValueError(
-        'edge {} has no nodes. Cannot perfrom a contraction'.format(edge.name))
+    raise ValueError("edge {} has no nodes. "
+                     "Cannot perfrom a contraction".format(edge.name))
   return network.contract(edge=edge, backend=backend, net=None, name=name)
 
 
@@ -66,6 +70,10 @@ def contract_between(
   Raises:
     ValueError: If no edges are found between node1 and node2 and
       `allow_outer_product` is set to `False`.
+    ValueError: If backends of the `node1` and `node2` are different
+      contracted.
+    TypeError: If `node1` and `node2` are different have no 
+      `backend` attribute
   """
   check_node_attributes(node1, node2)
   backend = node1.backend
@@ -79,9 +87,9 @@ def contract_between(
       output_edge_order=output_edge_order)
 
 
-def kron(node1: BaseNode, node2: BaseNode,
-         name: Optional[Text] = None) -> BaseNode:
-  """Calculates an outer product of the two nodes.
+def outer_product(node1: BaseNode, node2: BaseNode,
+                  name: Optional[Text] = None) -> BaseNode:
+  """Calculates the outer product of the two nodes.
 
   This causes the nodes to combine their edges and axes, so the shapes are
   combined. For example, if `a` had a shape (2, 3) and `b` had a shape
@@ -96,7 +104,14 @@ def kron(node1: BaseNode, node2: BaseNode,
     name: Optional name to give the new node created.
 
   Returns:
-    A new node. Its shape will be node1.shape + node2.shape
+    A new node. Its shape will be node1.shape + node2.shape. It's edges 
+      are inherited from `node1` and `node2`, and `node1` and `node2`
+      get new dangling edges
+  Raises:
+    ValueError: If backends of the `node1` and `node2` are different
+      contracted.
+    TypeError: If `node1` and `node2` are different have no 
+      `backend` attribute
   """
   check_node_attributes(node1, node2)
   backend = node1.backend
@@ -106,29 +121,54 @@ def kron(node1: BaseNode, node2: BaseNode,
 
 def conj(node: BaseNode,
          name: Optional[Text] = None,
-         axis_names: Optional[List[Text]] = None,
-         backend: Optional[Text] = None) -> BaseNode:
-
+         axis_names: Optional[List[Text]] = None) -> BaseNode:
+  """Conjugate `node`
+  Args:
+    node: A `BaseNode`. 
+    name: Optional name to give the new node.
+    axis_names: Optional list of names for the axis.
+  Returns:
+    A new node. The complex conjugate of `node`.
+  Raises:
+    TypeError: If `node` has no `backend` attribute.
+  """
+  if not hasattr(node, 'backend'):
+    raise TypeError('Node {} of type {} has no `backend`'.format(
+        node, type(node)))
+  backend = node.backend
   if not axis_names:
     axis_names = node.axis_names
-  if not backend:
-    backend = node.backend
 
-  return FreeNode(
+  return BaseNode(
       node.tensor, name=name, axis_names=axis_names, backend=backend.name)
 
 
 def transpose(node: BaseNode,
               permutation: Sequence[Union[Text, int]],
               name: Optional[Text] = None,
-              axis_names: Optional[List[Text]] = None,
-              backend: Optional[Text] = None) -> BaseNode:
+              axis_names: Optional[List[Text]] = None) -> BaseNode:
+  """Transpose `node`
+  Args:
+    node: A `BaseNode`. 
+    permutation: A list of int ro str. The permutation of the axis
+    name: Optional name to give the new node.
+    axis_names: Optional list of names for the axis.
+  Returns:
+    A new node. The transpose of `node`.
+  Raises:
+    TypeError: If `node` has no `backend` attribute.
+    ValueError: If either `permutation` is not the same as expected or
+      if you try to permute with a trace edge.
+    AttributeError: If `node` has no tensor.
+  """
 
+  if not hasattr(node, 'backend'):
+    raise TypeError('Node {} of type {} has no `backend`'.format(
+        node, type(node)))
+  backend = node.backend
   if not axis_names:
     axis_names = node.axis_names
-  if not backend:
-    backend = node.backend
-  new_node = FreeNode(
+  new_node = BaseNode(
       node.tensor, name=name, axis_names=node.axis_names, backend=backend.name)
   new_order = [new_node[n] for n in permutation]
   new_node.reorder_edges(new_order)
