@@ -76,11 +76,13 @@ class BaseNode(ABC):
     self._shape = shape
     if axis_names is not None:
       self._edges = [
-          Edge(edge_name, self, i) for i, edge_name in enumerate(axis_names)
+          Edge(node1=self, axis1=i, name=edge_name)
+          for i, edge_name in enumerate(axis_names)
       ]
     elif shape is not None:
       self._edges = [
-          Edge("Dangling_{}".format(i), self, i) for i, _ in enumerate(shape)
+          Edge(node1=self, axis1=i, name="Dangling_{}".format(i))
+          for i, _ in enumerate(shape)
       ]
     else:
       raise ValueError("One of axis_names or shape must be provided.")
@@ -216,10 +218,7 @@ class BaseNode(ABC):
       permutation.append(old_position)
       edge.update_axis(old_position, self, i, self)
     self.edges = edge_order[:]
-    if isinstance(self, FreeNode):
-      self.tensor = self.backend.transpose(self.tensor, perm=permutation)
-    else:
-      self.tensor = self.backend.transpose(self.tensor, perm=permutation)
+    self.tensor = self.backend.transpose(self.tensor, perm=permutation)
     if self.axis_names is not None:
       # Update axis_names:
       tmp_axis_names = []
@@ -248,10 +247,7 @@ class BaseNode(ABC):
     if set(perm) != set(range(len(self.edges))):
       raise ValueError("A full permutation was not passed. "
                        "Permutation passed: {}".format(perm))
-    if isinstance(self, FreeNode):
-      self.tensor = self.backend.transpose(self.tensor, perm=perm)
-    else:
-      self.tensor = self.backend.transpose(self.tensor, perm=perm)
+    self.tensor = self.backend.transpose(self.tensor, perm=perm)
     tmp_edges = []
     for i, position in enumerate(perm):
       edge = self.edges[position]
@@ -326,7 +322,7 @@ class BaseNode(ABC):
     if self.name:
       return self.name
     else:
-      return '__Anonymous_Node__'
+      return '__unnamed_node__'
 
   def __lt__(self, other):
     if not isinstance(other, BaseNode):
@@ -486,14 +482,16 @@ class Node(BaseNode):
     # of `tensor`.
     if backend is None:
       backend = config.default_backend
-    backend_ = backend_factory.get_backend(backend, dtype)
-    self._tensor = backend_.convert_to_tensor(tensor)
-    super().__init__(name=name, axis_names=axis_names, backend=backend_)
+    backend = backend_factory.get_backend(backend, dtype)
+    self._tensor = backend.convert_to_tensor(tensor)
 
+    super().__init__(
+        name=name,
+        axis_names=axis_names,
+        backend=backend,
+        shape=backend.shape_tuple(self._tensor))
     if not self.backend.dtype:
       self.backend.dtype = self._tensor.dtype
-    if not axis_names:
-      axis_names = [str(n) for n in len(self.shape)]
 
   def get_tensor(self):
     return self.tensor
@@ -542,6 +540,16 @@ class Node(BaseNode):
         value=tensor, name=name, axis_names=[ax for ax in axis_names])
     node.set_signature(signature)
     return node
+
+  def fresh_edges(self, axis_names: Optional[List[Text]] = None):
+    new_edges = []
+    if not axis_names:
+      axis_names = self.axis_names
+    if not axis_names:
+      axis_names = [str(i) for i in range(len(self.shape))]
+    for i, edge in enumerate(self.edges):
+      new_edge = Edge(node1=self, axis1=i, name=axis_names[i])
+      self.add_edge(new_edge, i, True)
 
 
 class CopyNode(BaseNode):
@@ -683,14 +691,6 @@ class CopyNode(BaseNode):
     node.set_signature(signature)
     return node
 
-  def fresh_edges(self, axis_names: Optional[List[Text]] = None):
-    new_edges = []
-    if not axis_names:
-      axis_names = self.axis_names
-    for i, edge in enumerate(self.edges):
-      new_edge = Edge(self.axis_names[i], node1=self, axis1=i)
-      self.add_edge(new_edge, i, True)
-
 
 class Edge:
   """Edge for the TensorNetwork graph.
@@ -721,9 +721,9 @@ class Edge:
   """
 
   def __init__(self,
-               name: Optional[Text],
                node1: BaseNode,
                axis1: int,
+               name: Optional[Text] = None,
                node2: Optional[BaseNode] = None,
                axis2: Optional[int] = None) -> None:
     """Create an Edge.
@@ -746,6 +746,8 @@ class Edge:
           "node2 and axis2 must either be both None or both not be None")
 
     self.disabled = False
+    if not name:
+      name = '__unnamed_edge__'
     self.name = name
     self.node1 = node1
     self._axis1 = axis1
@@ -958,25 +960,36 @@ class Edge:
     if self.name:
       return self.name
     else:
-      return '__Anonymous_Edge__'
+      return '__unnamed_edge__'
 
-  def disconnect(self, edge1_name: Text,
-                 edge2_name: Text) -> Tuple[BaseNode, BaseNode]:
+  def disconnect(
+      self,
+      edge1_name: Optional[Text] = None,
+      edge2_name: Optional[Text] = None) -> Tuple[BaseNode, BaseNode]:
     """
     Break an existing non-dangling edge.
     This updates both Edge.node1 and Edge.node2 by removing the 
     connecting edge from `Edge.node1.edges` and `Edge.node2.edges`
     and adding new dangling edges instead
+    Args:
+      edge1_name: A name for the new dangling edge at `self.node1`
+      edge2_name: A name for the new dangling edge at `self.node2`
+    Returns:
+      (new_edge1, new_edge2): The new `Edge` objects of 
+        `self.node1` and `self.node2`
     """
     if self.is_dangling():
       raise ValueError("Cannot break dangling edge {}.".format(self))
+    if not edge1_name:
+      edge1_name = 'anonymous_edge'
+    if not edge2_name:
+      edge2_name = 'anonymous_edge'
+
     node1 = self.node1
     node2 = self.node2
 
-    axis1_num = node1.get_axis_number(self.axis1)
-    axis2_num = node2.get_axis_number(self.axis2)
-    new_edge1 = Edge(edge1_name, node1, axis1_num)
-    new_edge2 = Edge(edge2_name, node2, axis2_num)
+    new_edge1 = Edge(node1=node1, axis1=self.axis1, name=edge1_name)
+    new_edge2 = Edge(node1=node2, axis1=self.axis2, name=edge2_name)
     node1.add_edge(new_edge1, axis1_num, override=True)
     node2.add_edge(new_edge2, axis2_num, override=True)
     return new_edge1, new_edge2
@@ -987,4 +1000,4 @@ class Edge:
     """
     if self is not other:
       raise ValueError('Cannot break two unconnected edges')
-    return edge1.disconnect('__Edge__', '__Edge__')
+    return self.disconnect('__Edge__', '__Edge__')
