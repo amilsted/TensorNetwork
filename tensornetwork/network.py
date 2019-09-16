@@ -30,6 +30,29 @@ Tensor = Any
 string_type = h5py.special_dtype(vlen=str)
 
 
+def get_shared_edges(
+    node1: network_components.BaseNode,
+    node2: network_components.BaseNode) -> Set[network_components.Edge]:
+  """Get all edges shared between two nodes.
+
+  Args:
+    node1: The first node.
+    node2: The second node.
+
+  Returns:
+    A (possibly empty) `set` of `Edge`s shared by the nodes.
+  """
+  nodes = {node1, node2}
+  shared_edges = set()
+  # Assuming the network is well formed, all of the edges shared by
+  # these two nodes will be stored in just one of the nodes, so we only
+  # have to do this loop once.
+  for edge in node1.edges:
+    if set(edge.get_nodes()) == nodes:
+      shared_edges.add(edge)
+  return shared_edges
+
+
 def _flatten_trace_edges(
     edges: List[network_components.Edge],
     backend: "Backend",
@@ -56,8 +79,10 @@ def _flatten_trace_edges(
   unaffected_shape = backend.shape(node.tensor)[:len(perm_front)]
   new_shape = backend.concat([unaffected_shape, [new_dim, new_dim]], axis=-1)
   node.tensor = backend.reshape(node.tensor, new_shape)
-  edge1 = network_components.Edge("TraceFront", node, len(perm_front))
-  edge2 = network_components.Edge("TraceBack", node, len(perm_front) + 1)
+  edge1 = network_components.Edge(
+      node1=node, axis1=len(perm_front), name="TraceFront")
+  edge2 = network_components.Edge(
+      node1=node, axis1=len(perm_front) + 1, name="TraceBack")
   node.edges = node.edges[:len(perm_front)] + [edge1, edge2]
   new_edge = connect(edge1, edge2, new_edge_name)
   return new_edge
@@ -129,7 +154,8 @@ def flatten_edges(
     # modifies a node's tensor.
     node.tensor = new_tensor
     # This Edge is required for the connect call later.
-    edge = network_components.Edge(new_edge_name, node, len(perm_front))
+    edge = network_components.Edge(
+        node1=node, axis1=len(perm_front), name=new_edge_name)
     # Do not set the signature of 'edge' since it is dangling.
     node.edges = node.edges[:len(perm_front)] + [edge]
     new_dangling_edges.append(edge)
@@ -167,7 +193,9 @@ def _remove_trace_edge(edge: network_components.Edge,
                        new_node: network_components.BaseNode) -> None:
   """Collapse a trace edge.
 
-  Collapses a trace edge and updates the network.
+  Take a trace edge (i.e. with edge.node1 = edge.node2),
+  remove it, update the axis numbers of all remaining edges
+  and move them to `new_node`.
 
   Args:
     edge: The edge to contract.
@@ -219,13 +247,15 @@ def _remove_edges(edges: Set[network_components.Edge],
                   node1: network_components.BaseNode,
                   node2: network_components.BaseNode,
                   new_node: network_components.BaseNode) -> None:
-  """Collapse a list of edges shared by two nodes in the network.
+  """
 
-  Collapses the edges and updates the rest of the network.
+  Takes a set of `edges` shared between `node1` and `node2` to be contracted 
+  over, and moves all other uncontracted edges from `node1` and `node2` to 
+  `new_node`.
   The nodes that currently share the edges in `edges` must be supplied as
   `node1` and `node2`. The ordering of `node1` and `node2` must match the
   axis ordering of `new_node` (as determined by the contraction procedure).
-
+  `node1` and `node2` get both a fresh set f edges.
   Args:
     edges: The edges to contract.
     node1: The old node that supplies the first edges of `new_node`.
@@ -288,7 +318,7 @@ def _remove_edges(edges: Set[network_components.Edge],
 
 def _contract_trace(edge: network_components.Edge,
                     name: Optional[Text] = None) -> network_components.BaseNode:
-  """Contract a trace edge connecting in the TensorNetwork.
+  """Contract a trace edge.
 
   Args:
     edge: The edge name or object to contract next.
@@ -329,8 +359,6 @@ def contract(edge: network_components.Edge,
   and `node1` and `node2` get a new set of dangling edges.
   Args:
     edge: The edge contract next.
-    backend: A backend object
-    net: An optional TensorNetwork
     name: Name of the new node created.
 
   Returns:
@@ -340,6 +368,17 @@ def contract(edge: network_components.Edge,
     ValueError: When edge is a dangling edge or if it already has been
       contracted.
   """
+  for node in [node1, node2]:
+    if not hasattr(node, 'backend'):
+      raise TypeError('Node {} of type {} has no `backend`'.format(
+          node, type(node)))
+
+  if edge.node1:
+    backend = edge.node1.backend
+  else:
+    raise ValueError("edge {} has no nodes. "
+                     "Cannot perfrom a contraction".format(edge.name))
+
   if edge.is_dangling():
     raise ValueError("Attempting to contract dangling edge")
   backend = edge.node1.backend
@@ -352,9 +391,11 @@ def contract(edge: network_components.Edge,
   return new_node
 
 
-def outer_product(node1: network_components.BaseNode,
-                  node2: network_components.BaseNode,
-                  name: Optional[Text] = None) -> network_components.BaseNode:
+def outer_product(
+    node1: network_components.BaseNode,
+    node2: network_components.BaseNode,
+    name: Optional[Text] = None,
+    axis_names: Optional[List[Text]] = None) -> network_components.BaseNode:
   """Calculates an outer product of the two nodes.
 
   This causes the nodes to combine their edges and axes, so the shapes are
@@ -369,6 +410,7 @@ def outer_product(node1: network_components.BaseNode,
     node2: The second node. The axes on this node will be on the right side of
       the new node.
     name: Optional name to give the new node created.
+    axis_names: An optional list of names for the axis of the new node
   Returns:
     A new node. Its shape will be node1.shape + node2.shape
   Raises:
@@ -376,6 +418,11 @@ def outer_product(node1: network_components.BaseNode,
     ValueError: If `Node` objects `node1` or `node2` have no 
       `TensorNetwork` object.
   """
+  for node in [node1, node2]:
+    if not hasattr(node, 'backend'):
+      raise TypeError('Node {} of type {} has no `backend`'.format(
+          node, type(node)))
+
   if node1.backend.name != node2.backend.name:
     raise ValueError("node {}  and node {} have different backends. "
                      "Cannot perform outer product".format(node1, node2))
@@ -384,7 +431,8 @@ def outer_product(node1: network_components.BaseNode,
   new_tensor = backend.outer_product(node1.tensor, node2.tensor)
   node1_axis_names = node1.axis_names
   node2_axis_names = node2.axis_names
-  new_node = network_components.Node(new_tensor, name=name)
+  new_node = network_components.Node(
+      tensor=new_tensor, name=name, axis_names=axis_names, backend=backend.name)
   additional_axes = len(node1.tensor.shape)
 
   for i, edge in enumerate(node1.edges):
@@ -407,6 +455,7 @@ def contract_between(
     name: Optional[Text] = None,
     allow_outer_product: bool = False,
     output_edge_order: Optional[Sequence[network_components.Edge]] = None,
+    axis_names: Optional[List[Text]] = None,
 ) -> network_components.BaseNode:
   """Contract all of the edges between the two given nodes.
 
@@ -421,7 +470,7 @@ def contract_between(
       contain all edges belonging to, but not shared by `node1` and `node2`.
       The axes of the new node will be permuted (if necessary) to match this
       ordering of Edges.
-
+    axis_names: An optional list of names for the axis of the new node
   Returns:
     The new node created.
 
@@ -429,6 +478,11 @@ def contract_between(
     ValueError: If no edges are found between node1 and node2 and
       `allow_outer_product` is set to `False`.
   """
+  for node in [node1, node2]:
+    if not hasattr(node, 'backend'):
+      raise TypeError('Node {} of type {} has no `backend`'.format(
+          node, type(node)))
+
   # Trace edges cannot be contracted using tensordot.
   if node1.backend.name != node2.backend.name:
     raise ValueError("node {}  and node {} have different backends. "
@@ -487,7 +541,8 @@ def contract_between(
       axes1, axes2 = axes2, axes1
 
   new_tensor = backend.tensordot(node1.tensor, node2.tensor, [axes1, axes2])
-  new_node = network_components.FreeNode(new_tensor, name=name)
+  new_node = network_components.Node(
+      tensor=new_tensor, name=name, axis_names=axis_names, backend=backend.name)
   _remove_edges(shared_edges, node1, node2, new_node)
   if output_edge_order:
     new_node = new_node.reorder_edges(list(output_edge_order))
@@ -519,58 +574,481 @@ def connect(edge1: network_components.Edge,
   #we have to check if node1[axis1_num] is already connected to
   #another node or not. If yes, we break the connection
   #and update node1 and the other node
-  if not node1.edges[axis1_num].is_dangling():
-    #node1_partner also is a FreeNode
-    node1_partner = node1.edges[axis1_num].node1 if node1.edges[
-        axis1_num].node1 is not node1 else node1.edges[axis1_num].node2
-    node1_partner_axis_num = node1.edges[axis1_num].axis1 if node1.edges[
-        axis1_num].node1 is not node1 else node1.edges[axis1_num].axis2
+  # if not node1.edges[axis1_num].is_dangling():
+  #   node1_partner = node1.edges[axis1_num].node1 if node1.edges[
+  #       axis1_num].node1 is not node1 else node1.edges[axis1_num].node2
+  #   node1_partner_axis_num = node1.edges[axis1_num].axis1 if node1.edges[
+  #       axis1_num].node1 is not node1 else node1.edges[axis1_num].axis2
 
-    new_dangling_edge = network_components.Edge(
-        node1_partner.edges[node1_partner_axis_num].name, node1_partner,
-        node1_partner_axis_num)
-    node1_partner.add_edge(new_dangling_edge, node1_partner_axis_num, True)
+  #   new_dangling_edge = network_components.Edge(
+  #       node1_partner.edges[node1_partner_axis_num].name, node1_partner,
+  #       node1_partner_axis_num)
+  #   node1_partner.add_edge(new_dangling_edge, node1_partner_axis_num, True)
 
-  if not node2.edges[axis2_num].is_dangling():
-    #node1_partner also is a FreeNode
-    node2_partner = node2.edges[axis2_num].node1 if node2.edges[
-        axis2_num].node1 is not node2 else node2.edges[axis2_num].node2
-    node2_partner_axis_num = node2.edges[axis2_num].axis1 if node2.edges[
-        axis2_num].node1 is not node2 else node2.edges[axis2_num].axis2
+  # if not node2.edges[axis2_num].is_dangling():
+  #   node2_partner = node2.edges[axis2_num].node1 if node2.edges[
+  #       axis2_num].node1 is not node2 else node2.edges[axis2_num].node2
+  #   node2_partner_axis_num = node2.edges[axis2_num].axis1 if node2.edges[
+  #       axis2_num].node1 is not node2 else node2.edges[axis2_num].axis2
 
-    new_dangling_edge = network_components.Edge(
-        node2_partner.edges[node2_partner_axis_num].name, node2_partner,
-        node2_partner_axis_num)
-    node2_partner.add_edge(new_dangling_edge, node2_partner_axis_num, True)
+  #   new_dangling_edge = network_components.Edge(
+  #       node2_partner.edges[node2_partner_axis_num].name, node2_partner,
+  #       node2_partner_axis_num)
+  #   node2_partner.add_edge(new_dangling_edge, node2_partner_axis_num, True)
 
-  new_edge = network_components.Edge(name, node1, axis1_num, node2, axis2_num)
+  new_edge = network_components.Edge(
+      node1=node1, axis1=axis1_num, name=name, node2=node2, axis2=axis2_num)
 
   node1.add_edge(new_edge, axis1_num, override=True)
   node2.add_edge(new_edge, axis2_num, override=True)
   return new_edge
 
 
-def get_shared_edges(
-    node1: network_components.BaseNode,
-    node2: network_components.BaseNode) -> Set[network_components.Edge]:
-  """Get all edges shared between two nodes.
+def disconnect(
+    edge1, edge2, edge1_name: Optional[Text], edge2_name: Optional[Text]
+) -> Tuple[network_components.BaseNode, network_components.BaseNode]:
+  """
+  Break an existing non-dangling edge.
+  This updates both Edge.node1 and Edge.node2 by removing the 
+  connecting edge from `Edge.node1.edges` and `Edge.node2.edges`
+  and adding new dangling edges instead
+  """
+  if edge1 is not edge2:
+    raise ValueError("edge1 and edge2 are not connected. "
+                     "Cannot disconnect unconnected edges")
+  edge.disconnect(edge1_name, edge2_name)
+
+
+def conj(
+    node: network_components.BaseNode,
+    name: Optional[Text] = None,
+    axis_names: Optional[List[Text]] = None) -> network_components.BaseNode:
+  """Conjugate `node`
+  Args:
+    node: A `BaseNode`. 
+    name: Optional name to give the new node.
+    axis_names: Optional list of names for the axis.
+  Returns:
+    A new node. The complex conjugate of `node`.
+  Raises:
+    TypeError: If `node` has no `backend` attribute.
+  """
+  if not hasattr(node, 'backend'):
+    raise TypeError('Node {} of type {} has no `backend`'.format(
+        node, type(node)))
+  backend = node.backend
+  if not axis_names:
+    axis_names = node.axis_names
+
+  return network_components.Node(
+      node.tensor, name=name, axis_names=axis_names, backend=backend.name)
+
+
+def transpose(
+    node: network_components.BaseNode,
+    permutation: Sequence[Union[Text, int]],
+    name: Optional[Text] = None,
+    axis_names: Optional[List[Text]] = None) -> network_components.BaseNode:
+  """Transpose `node`
+  Args:
+    node: A `BaseNode`. 
+    permutation: A list of int ro str. The permutation of the axis
+    name: Optional name to give the new node.
+    axis_names: Optional list of names for the axis.
+  Returns:
+    A new node. The transpose of `node`.
+  Raises:
+    TypeError: If `node` has no `backend` attribute.
+    ValueError: If either `permutation` is not the same as expected or
+      if you try to permute with a trace edge.
+    AttributeError: If `node` has no tensor.
+  """
+
+  if not hasattr(node, 'backend'):
+    raise TypeError('Node {} of type {} has no `backend`'.format(
+        node, type(node)))
+  if not axis_names:
+    axis_names = node.axis_names
+  new_node = network_components.Node(
+      node.tensor,
+      name=name,
+      axis_names=node.axis_names,
+      backend=node.backend.name)
+  return new_node.reorder_axes(permutation)
+
+
+def split_node(
+    node: network_components.BaseNode,
+    left_edges: List[network_components.Edge],
+    right_edges: List[network_components.Edge],
+    max_singular_values: Optional[int] = None,
+    max_truncation_err: Optional[float] = None,
+    left_name: Optional[Text] = None,
+    right_name: Optional[Text] = None,
+    edge_name: Optional[Text] = None,
+) -> Tuple[network_components.BaseNode, network_components.BaseNode, Tensor]:
+  """Split a `Node` using Singular Value Decomposition.
+
+  Let M be the matrix created by flattening left_edges and right_edges into
+  2 axes. Let :math:`U S V^* = M` be the Singular Value Decomposition of 
+  :math:`M`. This will split the network into 2 nodes. The left node's 
+  tensor will be :math:`U \\sqrt{S}` and the right node's tensor will be 
+  :math:`\\sqrt{S} V^*` where :math:`V^*` is
+  the adjoint of :math:`V`.
+
+  The singular value decomposition is truncated if `max_singular_values` or
+  `max_truncation_err` is not `None`.
+
+  The truncation error is the 2-norm of the vector of truncated singular
+  values. If only `max_truncation_err` is set, as many singular values will
+  be truncated as possible while maintaining:
+  `norm(truncated_singular_values) <= max_truncation_err`.
+
+  If only `max_singular_values` is set, the number of singular values kept
+  will be `min(max_singular_values, number_of_singular_values)`, so that
+  `max(0, number_of_singular_values - max_singular_values)` are truncated.
+
+  If both `max_truncation_err` and `max_singular_values` are set,
+  `max_singular_values` takes priority: The truncation error may be larger
+  than `max_truncation_err` if required to satisfy `max_singular_values`.
 
   Args:
-    node1: The first node.
-    node2: The second node.
+    node: The node you want to split.
+    left_edges: The edges you want connected to the new left node.
+    right_edges: The edges you want connected to the new right node.
+    max_singular_values: The maximum number of singular values to keep.
+    max_truncation_err: The maximum allowed truncation error.
+    left_name: The name of the new left node. If `None`, a name will be generated
+      automatically.
+    right_name: The name of the new right node. If `None`, a name will be generated
+      automatically.
+    edge_name: The name of the new `Edge` connecting the new left and right node. 
+      If `None`, a name will be generated automatically. The new axis will get the
+      same name as the edge.
 
   Returns:
-    A (possibly empty) `set` of `Edge`s shared by the nodes.
+    A tuple containing:
+      left_node: 
+        A new node created that connects to all of the `left_edges`.
+        Its underlying tensor is :math:`U \\sqrt{S}`
+      right_node: 
+        A new node created that connects to all of the `right_edges`.
+        Its underlying tensor is :math:`\\sqrt{S} V^*`
+      truncated_singular_values: 
+        The vector of truncated singular values.
   """
-  nodes = {node1, node2}
-  shared_edges = set()
-  # Assuming the network is well formed, all of the edges shared by
-  # these two nodes will be stored in just one of the nodes, so we only
-  # have to do this loop once.
-  for edge in node1.edges:
-    if set(edge.get_nodes()) == nodes:
-      shared_edges.add(edge)
-  return shared_edges
+
+  if not hasattr(node, 'backend'):
+    raise TypeError('Node {} of type {} has no `backend`'.format(
+        node, type(node)))
+
+  if node.axis_names and edge_name:
+    left_axis_names = []
+    right_axis_names = [edge_name]
+    for edge in left_edges:
+      left_axis_names.append(node.axis_names[edge.axis1] if edge.node1 is node
+                             else node.axis_names[edge.axis2])
+    for edge in right_edges:
+      right_axis_names.append(node.axis_names[edge.axis1] if edge.node1 is node
+                              else node.axis_names[edge.axis2])
+    left_axis_names.append(edge_name)
+  else:
+    left_axis_names = None
+    right_axis_names = None
+
+  backend = node.backend
+  node.reorder_edges(left_edges + right_edges)
+
+  u, s, vh, trun_vals = backend.svd_decomposition(
+      node.tensor, len(left_edges), max_singular_values, max_truncation_err)
+  sqrt_s = backend.sqrt(s)
+  u_s = u * sqrt_s
+  # We have to do this since we are doing element-wise multiplication against
+  # the first axis of vh. If we don't, it's possible one of the other axes of
+  # vh will be the same size as sqrt_s and would multiply across that axis
+  # instead, which is bad.
+  sqrt_s_broadcast_shape = backend.concat(
+      [backend.shape(sqrt_s), [1] * (len(vh.shape) - 1)], axis=-1)
+  vh_s = vh * backend.reshape(sqrt_s, sqrt_s_broadcast_shape)
+  left_node = network_components.Node(
+      u_s, name=left_name, axis_names=left_axis_names, backend=backend.name)
+  for i, edge in enumerate(left_edges):
+    left_node.add_edge(edge, i)
+    edge.update_axis(i, node, i, left_node)
+  right_node = network_components.Node(
+      vh_s, name=right_name, axis_names=right_axis_names, backend=backend.name)
+  for i, edge in enumerate(right_edges):
+    # i + 1 to account for the new edge.
+    right_node.add_edge(edge, i + 1)
+    edge.update_axis(i + len(left_edges), node, i + 1, right_node)
+  connect(left_node.edges[-1], right_node.edges[0], name=edge_name)
+  node.fresh_edges(node.axis_names)
+  return left_node, right_node, trun_vals
+
+
+def split_node_qr(
+    node: network_components.BaseNode,
+    left_edges: List[network_components.Edge],
+    right_edges: List[network_components.Edge],
+    left_name: Optional[Text] = None,
+    right_name: Optional[Text] = None,
+    edge_name: Optional[Text] = None,
+) -> Tuple[network_components.BaseNode, network_components.BaseNode]:
+  """Split a `Node` using QR decomposition
+
+  Let M be the matrix created by flattening left_edges and right_edges into
+  2 axes. Let :math:`QR = M` be the QR Decomposition of
+  :math:`M`. This will split the network into 2 nodes. The left node's
+  tensor will be :math:`Q` (an orthonormal matrix) and the right node's tensor will be
+  :math:`R` (an upper triangular matrix)
+
+  Args:
+    node: The node you want to split.
+    left_edges: The edges you want connected to the new left node.
+    right_edges: The edges you want connected to the new right node.
+    left_name: The name of the new left node. If `None`, a name will be generated
+      automatically.
+    right_name: The name of the new right node. If `None`, a name will be generated
+      automatically.
+    edge_name: The name of the new `Edge` connecting the new left and right node.
+      If `None`, a name will be generated automatically.
+
+  Returns:
+    A tuple containing:
+      left_node:
+        A new node created that connects to all of the `left_edges`.
+        Its underlying tensor is :math:`Q`
+      right_node:
+        A new node created that connects to all of the `right_edges`.
+        Its underlying tensor is :math:`R`
+  """
+  if not hasattr(node, 'backend'):
+    raise TypeError('Node {} of type {} has no `backend`'.format(
+        node, type(node)))
+
+  if node.axis_names and edge_name:
+    left_axis_names = []
+    right_axis_names = [edge_name]
+    for edge in left_edges:
+      left_axis_names.append(node.axis_names[edge.axis1] if edge.node1 is node
+                             else node.axis_names[edge.axis2])
+    for edge in right_edges:
+      right_axis_names.append(node.axis_names[edge.axis1] if edge.node1 is node
+                              else node.axis_names[edge.axis2])
+    left_axis_names.append(edge_name)
+  else:
+    left_axis_names = None
+    right_axis_names = None
+
+  backend = node.backend
+  node.reorder_edges(left_edges + right_edges)
+  q, r = backend.qr_decomposition(node.tensor, len(left_edges))
+  left_node = network_components.Node(
+      q, name=left_name, axis_names=left_axis_names, backend=backend.name)
+  for i, edge in enumerate(left_edges):
+    left_node.add_edge(edge, i)
+    edge.update_axis(i, node, i, left_node)
+  right_node = network_components.Node(
+      r, name=right_name, axis_names=right_axis_names, backend=backend.name)
+  for i, edge in enumerate(right_edges):
+    # i + 1 to account for the new edge.
+    right_node.add_edge(edge, i + 1)
+    edge.update_axis(i + len(left_edges), node, i + 1, right_node)
+  connect(left_node.edges[-1], right_node.edges[0], name=edge_name)
+  return left_node, right_node
+
+
+def split_node_rq(
+    node: network_components.BaseNode,
+    left_edges: List[network_components.Edge],
+    right_edges: List[network_components.Edge],
+    left_name: Optional[Text] = None,
+    right_name: Optional[Text] = None,
+    edge_name: Optional[Text] = None,
+) -> Tuple[network_components.BaseNode, network_components.BaseNode]:
+  """Split a `Node` using RQ (reversed QR) decomposition
+
+  Let M be the matrix created by flattening left_edges and right_edges into
+  2 axes. Let :math:`QR = M^*` be the QR Decomposition of
+  :math:`M^*`. This will split the network into 2 nodes. The left node's
+  tensor will be :math:`R^*` (a lower triangular matrix) and the right node's tensor will be
+  :math:`Q^*` (an orthonormal matrix)
+
+  Args:
+    node: The node you want to split.
+    left_edges: The edges you want connected to the new left node.
+    right_edges: The edges you want connected to the new right node.
+    left_name: The name of the new left node. If `None`, a name will be generated
+      automatically.
+    right_name: The name of the new right node. If `None`, a name will be generated
+      automatically.
+    edge_name: The name of the new `Edge` connecting the new left and right node.
+      If `None`, a name will be generated automatically.
+
+  Returns:
+    A tuple containing:
+      left_node:
+        A new node created that connects to all of the `left_edges`.
+        Its underlying tensor is :math:`Q`
+      right_node:
+        A new node created that connects to all of the `right_edges`.
+        Its underlying tensor is :math:`R`
+  """
+  if not hasattr(node, 'backend'):
+    raise TypeError('Node {} of type {} has no `backend`'.format(
+        node, type(node)))
+
+  if node.axis_names and edge_name:
+    left_axis_names = []
+    right_axis_names = [edge_name]
+    for edge in left_edges:
+      left_axis_names.append(node.axis_names[edge.axis1] if edge.node1 is node
+                             else node.axis_names[edge.axis2])
+    for edge in right_edges:
+      right_axis_names.append(node.axis_names[edge.axis1] if edge.node1 is node
+                              else node.axis_names[edge.axis2])
+    left_axis_names.append(edge_name)
+  else:
+    left_axis_names = None
+    right_axis_names = None
+  backend = node.backend
+  node.reorder_edges(left_edges + right_edges)
+  r, q = backend.rq_decomposition(node.tensor, len(left_edges))
+  left_node = network_components.Node(
+      r, name=left_name, axis_names=left_axis_names, backend=backend.name)
+  for i, edge in enumerate(left_edges):
+    left_node.add_edge(edge, i)
+    edge.update_axis(i, node, i, left_node)
+  right_node = network_components.Node(
+      q, name=right_name, axis_names=right_axis_names, backend=backend.name)
+  for i, edge in enumerate(right_edges):
+    # i + 1 to account for the new edge.
+    right_node.add_edge(edge, i + 1)
+    edge.update_axis(i + len(left_edges), node, i + 1, right_node)
+  connect(left_node.edges[-1], right_node.edges[0], name=edge_name)
+  return left_node, right_node
+
+
+def split_node_full_svd(
+    node: network_components.BaseNode,
+    left_edges: List[network_components.Edge],
+    right_edges: List[network_components.Edge],
+    max_singular_values: Optional[int] = None,
+    max_truncation_err: Optional[float] = None,
+    left_name: Optional[Text] = None,
+    middle_name: Optional[Text] = None,
+    right_name: Optional[Text] = None,
+    left_edge_name: Optional[Text] = None,
+    right_edge_name: Optional[Text] = None,
+) -> Tuple[network_components.BaseNode, network_components
+           .BaseNode, network_components.BaseNode, Tensor]:
+  """Split a node by doing a full singular value decomposition.
+
+  Let M be the matrix created by flattening left_edges and right_edges into
+  2 axes. Let :math:`U S V^* = M` be the Singular Value Decomposition of
+  :math:`M`.
+
+  The left most node will be :math:`U` tensor of the SVD, the middle node is
+  the diagonal matrix of the singular values, ordered largest to smallest,
+  and the right most node will be the :math:`V*` tensor of the SVD.
+
+  The singular value decomposition is truncated if `max_singular_values` or
+  `max_truncation_err` is not `None`.
+
+  The truncation error is the 2-norm of the vector of truncated singular
+  values. If only `max_truncation_err` is set, as many singular values will
+  be truncated as possible while maintaining:
+  `norm(truncated_singular_values) <= max_truncation_err`.
+
+  If only `max_singular_values` is set, the number of singular values kept
+  will be `min(max_singular_values, number_of_singular_values)`, so that
+  `max(0, number_of_singular_values - max_singular_values)` are truncated.
+
+  If both `max_truncation_err` and `max_singular_values` are set,
+  `max_singular_values` takes priority: The truncation error may be larger
+  than `max_truncation_err` if required to satisfy `max_singular_values`.
+
+  Args:
+    node: The node you want to split.
+    left_edges: The edges you want connected to the new left node.
+    right_edges: The edges you want connected to the new right node.
+    max_singular_values: The maximum number of singular values to keep.
+    max_truncation_err: The maximum allowed truncation error.
+    left_name: The name of the new left node. If None, a name will be generated
+      automatically.
+    middle_name: The name of the new center node. If None, a name will be generated
+      automatically.
+    right_name: The name of the new right node. If None, a name will be generated
+      automatically.
+    left_edge_name: The name of the new left `Edge` connecting
+      the new left node (`U`) and the new central node (`S`).
+      If `None`, a name will be generated automatically.
+    right_edge_name: The name of the new right `Edge` connecting
+      the new central node (`S`) and the new right node (`V*`).
+      If `None`, a name will be generated automatically.
+
+  Returns:
+    A tuple containing:
+      left_node:
+        A new node created that connects to all of the `left_edges`.
+        Its underlying tensor is :math:`U`
+      singular_values_node:
+        A new node that has 2 edges connecting `left_node` and `right_node`.
+        Its underlying tensor is :math:`S`
+      right_node:
+        A new node created that connects to all of the `right_edges`.
+        Its underlying tensor is :math:`V^*`
+      truncated_singular_values:
+        The vector of truncated singular values.
+  """
+  if not hasattr(node, 'backend'):
+    raise TypeError('Node {} of type {} has no `backend`'.format(
+        node, type(node)))
+
+  if node.axis_names and left_edge_name and right_edge_name:
+    left_axis_names = []
+    right_axis_names = [right_edge_name]
+    for edge in left_edges:
+      left_axis_names.append(node.axis_names[edge.axis1] if edge.node1 is node
+                             else node.axis_names[edge.axis2])
+    for edge in right_edges:
+      right_axis_names.append(node.axis_names[edge.axis1] if edge.node1 is node
+                              else node.axis_names[edge.axis2])
+    left_axis_names.append(left_edge_name)
+    center_axis_names = [left_edge_name, right_edge_name]
+  else:
+    left_axis_names = None
+    center_axis_names = None
+    right_axis_names = None
+
+  backend = node.backend
+
+  node.reorder_edges(left_edges + right_edges)
+  u, s, vh, trun_vals = backend.svd_decomposition(
+      node.tensor, len(left_edges), max_singular_values, max_truncation_err)
+  left_node = network_components.Node(
+      u, name=left_name, axis_names=left_axis_names, backend=backend.name)
+  singular_values_node = network_components.Node(
+      backend.diag(s),
+      name=middle_name,
+      axis_names=center_axis_names,
+      backend=backend.name)
+
+  right_node = network_components.Node(
+      vh, name=right_name, axis_names=right_axis_names, backend=backend.name)
+
+  for i, edge in enumerate(left_edges):
+    left_node.add_edge(edge, i)
+    edge.update_axis(i, node, i, left_node)
+  for i, edge in enumerate(right_edges):
+    # i + 1 to account for the new edge.
+    right_node.add_edge(edge, i + 1)
+    edge.update_axis(i + len(left_edges), node, i + 1, right_node)
+  connect(
+      left_node.edges[-1], singular_values_node.edges[0], name=left_edge_name)
+  connect(
+      singular_values_node.edges[1], right_node.edges[0], name=right_edge_name)
+  return left_node, singular_values_node, right_node, trun_vals
 
 
 class TensorNetwork:
@@ -658,11 +1136,16 @@ class TensorNetwork:
       if not edge.is_dangling():
         node2 = edge.node2
         axis2 = edge.node2.get_axis_number(edge.axis2)
-        new_edge = network_components.Edge(edge.name, node_dict[node1], axis1,
-                                           node_dict[node2], axis2)
+        new_edge = network_components.Edge(
+            node1=node_dict[node1],
+            axis1=axis1,
+            name=edge.name,
+            node2=node_dict[node2],
+            axis2=axis2)
         new_edge.set_signature(edge.signature)
       else:
-        new_edge = network_components.Edge(edge.name, node_dict[node1], axis1)
+        new_edge = network_components.Edge(
+            node1=node_dict[node1], axis1=axis1, name=edge.name)
 
       node_dict[node1].add_edge(new_edge, axis1)
       if not edge.is_dangling():
