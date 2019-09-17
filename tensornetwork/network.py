@@ -1117,7 +1117,7 @@ def reachable_recursive(
       reachable_nodes.append(next_node)
       _reachable(next_node)
 
-    _reachable(node)
+  _reachable(node)
 
   return reachable_nodes
 
@@ -1154,6 +1154,58 @@ def reachable_iterative(
     if depth == 0:
       break
   return reachable_nodes
+
+
+def check_correct(nodes: List[network_components.BaseNode],
+                  check_connected: bool = True) -> None:
+  """Check that the network is structured correctly.
+
+  Args:
+    nodes: A list of `BaseNode` objects.
+    check_connected: Check if the network is connected.
+
+  Raises:
+    ValueError: If the tensor network is not correctly structured.
+  """
+  for node in nodes:
+    for i, edge in enumerate(node.edges):
+      if edge.node1 is not node and edge.node2 is not node:
+        raise ValueError("Edge '{}' does not connect to node '{}'."
+                         "Edge's nodes: '{}', '{}'.".format(
+                             edge, node, edge.node1, edge.node2))
+
+      is_edge_node_consistent = False
+      if edge.node1 is node:
+        if edge.axis1 == i:
+          is_edge_node_consistent = True
+      if edge.node2 is node:
+        if edge.axis2 == i:
+          is_edge_node_consistent = True
+      if not is_edge_node_consistent:
+        raise ValueError(
+            "Edge '{}' does not point to '{}' on the correct axis. "
+            "Edge axes: {}, {}. Node axis: {}.".format(edge, node, edge.axis1,
+                                                       edge.axis2, i))
+  if check_connected:
+    check_connected()
+
+
+def check_connected(nodes: List[network_components.BaseNode]) -> None:
+  """Check if the network is connected."""
+  # Fastest way to get a single item from a set.
+  node = next(iter(nodes))
+  node_que = collections.deque()
+  seen_nodes = {node}
+  node_que.append(node)
+  while node_que:
+    node = node_que.popleft()
+    for e in node.edges:
+      for n in e.get_nodes():
+        if n is not None and n not in seen_nodes:
+          node_que.append(n)
+          seen_nodes.add(n)
+  if nodes != seen_nodes:
+    raise ValueError("Non-connected graph")
 
 
 class TensorNetwork:
