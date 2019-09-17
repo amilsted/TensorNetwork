@@ -71,7 +71,7 @@ class BaseNode(ABC):
         doesn't match the shape of the tensor.
     """
     self.is_disabled = False
-    self.name = name
+    self.name = name if name is not None else '__unnamed_node__'
     self.backend = backend
     self._shape = shape
     if axis_names is not None:
@@ -325,10 +325,7 @@ class BaseNode(ABC):
     return self.get_edge(key)
 
   def __str__(self) -> Text:
-    if self.name:
-      return self.name
-    else:
-      return '__unnamed_node__'
+    return self.name
 
   def __lt__(self, other):
     if not isinstance(other, BaseNode):
