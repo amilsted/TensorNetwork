@@ -1055,28 +1055,48 @@ class TensorNetwork:
   """Implementation of a TensorNetwork."""
 
   def __init__(self,
-               backend: Optional[Text] = None,
-               dtype: Optional[Type[np.number]] = None) -> None:
+               nodes: List[network_components.BaseNode],
+               override_names: Optional[bool] = False) -> None:
     """
     Args:
-      backend (str): name of the backend. Currently supported 
-                     backends are 'numpy', 'tensorflow', 'pytorch', 'jax', 'shell'
-      dtype: dtype of the backend of network. If `None`, no dtype checks 
-             are performed. Default value is `None`. For backend 
-             initialization functions like `zeros`, `ones`, `randn` a 
-             dtype of `None` defaults to float64
+      nodes (list): A list of connected `BaseNode` objects.
     """
-    if backend is None:
-      backend = config.default_backend
-    if dtype is None:
-      dtype = config.default_dtype
-    #backend.dtype is initialized from config.py (currently `None`)
-    #if `backend.dtype = None`, the backend dtype is set at the first
-    #call to `add_node(tensor)` to `backend.dtype = tensor.dtype`
-    #if `dtype` is is set at initialization, all tensors added to
-    #the network have to have the same `dtype` as the backend
-    self.backend = backend_factory.get_backend(backend, dtype)
-    self.nodes_set = set()
+    if override_names:
+      if len(nodes) != len(set(nodes)):
+        vals, cnts = np.unique(np.array(nodes), return_counts=True)
+        raise ValueError('The following nodes occur more than once: {}'.format(
+            vals[cnts > 1]))
+      edges = [e for node in nodes for e in node.edges]
+      if len(edges) != len(set(edges)):
+        vals, cnts = np.unique(np.array(edges), return_counts=True)
+        raise ValueError('The following edges occur more than once: {}'.format(
+            vals[cnts > 1]))
+
+    node_names = [node.name for node in nodes]
+    if len(node_names) != len(set(node_names)):
+      vals, cnts = np.unique(np.array(node_names), return_counts=True)
+      raise ValueError(
+          'The following node names occur more than once: {}'.format(
+              vals[cnts > 1]))
+
+    edge_names = [e.name for node in nodes for e in node.edges]
+
+    if len(edge_names) != len(set(edge_names)):
+      vals, cnts = np.unique(np.array(edge_names), return_counts=True)
+      raise ValueError(
+          'The following edge names occur more than once: {}'.format(
+              vals[cnts > 1]))
+
+    if nodes:
+      self.backend = nodes[0].backend
+
+    backend_check = [node.backend.name is self.backend.name for node in nodes]
+    if not np.all(backend_check):
+      raise ValueError("All nodes passed to `TensorNetwork.__init__` "
+                       "have to have the same backend. Got backends {}".format(
+                           set([node.backend for node in nodes])))
+
+    self.nodes_set = set(nodes)
     # These increments are only used for generating names.
     self.node_increment = 0
     self.edge_increment = 0
@@ -1309,378 +1329,6 @@ class TensorNetwork:
       two given nodes, that original edge is included in this list.
     """
     raise NotImplementedError()
-
-  def split_node(
-      self,
-      node: network_components.BaseNode,
-      left_edges: List[network_components.Edge],
-      right_edges: List[network_components.Edge],
-      max_singular_values: Optional[int] = None,
-      max_truncation_err: Optional[float] = None,
-      left_name: Optional[Text] = None,
-      right_name: Optional[Text] = None,
-      edge_name: Optional[Text] = None,
-  ) -> Tuple[network_components.BaseNode, network_components.BaseNode, Tensor]:
-    """Split a `Node` using Singular Value Decomposition.
-
-    Let M be the matrix created by flattening left_edges and right_edges into
-    2 axes. Let :math:`U S V^* = M` be the Singular Value Decomposition of 
-    :math:`M`. This will split the network into 2 nodes. The left node's 
-    tensor will be :math:`U \\sqrt{S}` and the right node's tensor will be 
-    :math:`\\sqrt{S} V^*` where :math:`V^*` is
-    the adjoint of :math:`V`.
-
-    The singular value decomposition is truncated if `max_singular_values` or
-    `max_truncation_err` is not `None`.
-
-    The truncation error is the 2-norm of the vector of truncated singular
-    values. If only `max_truncation_err` is set, as many singular values will
-    be truncated as possible while maintaining:
-    `norm(truncated_singular_values) <= max_truncation_err`.
-
-    If only `max_singular_values` is set, the number of singular values kept
-    will be `min(max_singular_values, number_of_singular_values)`, so that
-    `max(0, number_of_singular_values - max_singular_values)` are truncated.
-
-    If both `max_truncation_err` and `max_singular_values` are set,
-    `max_singular_values` takes priority: The truncation error may be larger
-    than `max_truncation_err` if required to satisfy `max_singular_values`.
-
-    Args:
-      node: The node you want to split.
-      left_edges: The edges you want connected to the new left node.
-      right_edges: The edges you want connected to the new right node.
-      max_singular_values: The maximum number of singular values to keep.
-      max_truncation_err: The maximum allowed truncation error.
-      left_name: The name of the new left node. If `None`, a name will be generated
-        automatically.
-      right_name: The name of the new right node. If `None`, a name will be generated
-        automatically.
-      edge_name: The name of the new `Edge` connecting the new left and right node. 
-        If `None`, a name will be generated automatically.
-
-    Returns:
-      A tuple containing:
-        left_node: 
-          A new node created that connects to all of the `left_edges`.
-          Its underlying tensor is :math:`U \\sqrt{S}`
-        right_node: 
-          A new node created that connects to all of the `right_edges`.
-          Its underlying tensor is :math:`\\sqrt{S} V^*`
-        truncated_singular_values: 
-          The vector of truncated singular values.
-    """
-    node.reorder_edges(left_edges + right_edges)
-    u, s, vh, trun_vals = self.backend.svd_decomposition(
-        node.tensor, len(left_edges), max_singular_values, max_truncation_err)
-    sqrt_s = self.backend.sqrt(s)
-    u_s = u * sqrt_s
-    # We have to do this since we are doing element-wise multiplication against
-    # the first axis of vh. If we don't, it's possible one of the other axes of
-    # vh will be the same size as sqrt_s and would multiply across that axis
-    # instead, which is bad.
-    sqrt_s_broadcast_shape = self.backend.concat(
-        [self.backend.shape(sqrt_s), [1] * (len(vh.shape) - 1)], axis=-1)
-    vh_s = vh * self.backend.reshape(sqrt_s, sqrt_s_broadcast_shape)
-    left_node = self.add_node(u_s, name=left_name)
-    for i, edge in enumerate(left_edges):
-      left_node.add_edge(edge, i)
-      edge.update_axis(i, node, i, left_node)
-    right_node = self.add_node(vh_s, name=right_name)
-    for i, edge in enumerate(right_edges):
-      # i + 1 to account for the new edge.
-      right_node.add_edge(edge, i + 1)
-      edge.update_axis(i + len(left_edges), node, i + 1, right_node)
-    self.connect(left_node.edges[-1], right_node.edges[0], name=edge_name)
-    self.nodes_set.remove(node)
-    node.disable()
-    return left_node, right_node, trun_vals
-
-  def split_node_qr(
-      self,
-      node: network_components.BaseNode,
-      left_edges: List[network_components.Edge],
-      right_edges: List[network_components.Edge],
-      left_name: Optional[Text] = None,
-      right_name: Optional[Text] = None,
-      edge_name: Optional[Text] = None,
-  ) -> Tuple[network_components.BaseNode, network_components.BaseNode]:
-    """Split a `Node` using QR decomposition
-
-    Let M be the matrix created by flattening left_edges and right_edges into
-    2 axes. Let :math:`QR = M` be the QR Decomposition of 
-    :math:`M`. This will split the network into 2 nodes. The left node's 
-    tensor will be :math:`Q` (an orthonormal matrix) and the right node's tensor will be 
-    :math:`R` (an upper triangular matrix)
-
-    Args:
-      node: The node you want to split.
-      left_edges: The edges you want connected to the new left node.
-      right_edges: The edges you want connected to the new right node.
-      left_name: The name of the new left node. If `None`, a name will be generated
-        automatically.
-      right_name: The name of the new right node. If `None`, a name will be generated
-        automatically.
-      edge_name: The name of the new `Edge` connecting the new left and right node. 
-        If `None`, a name will be generated automatically.
-
-    Returns:
-      A tuple containing:
-        left_node: 
-          A new node created that connects to all of the `left_edges`.
-          Its underlying tensor is :math:`Q`
-        right_node: 
-          A new node created that connects to all of the `right_edges`.
-          Its underlying tensor is :math:`R`
-    """
-    node.reorder_edges(left_edges + right_edges)
-    q, r = self.backend.qr_decomposition(node.tensor, len(left_edges))
-    left_node = self.add_node(q, name=left_name)
-    for i, edge in enumerate(left_edges):
-      left_node.add_edge(edge, i)
-      edge.update_axis(i, node, i, left_node)
-    right_node = self.add_node(r, name=right_name)
-    for i, edge in enumerate(right_edges):
-      # i + 1 to account for the new edge.
-      right_node.add_edge(edge, i + 1)
-      edge.update_axis(i + len(left_edges), node, i + 1, right_node)
-    self.connect(left_node.edges[-1], right_node.edges[0], name=edge_name)
-    self.nodes_set.remove(node)
-    node.disable()
-    return left_node, right_node
-
-  def split_node_rq(
-      self,
-      node: network_components.BaseNode,
-      left_edges: List[network_components.Edge],
-      right_edges: List[network_components.Edge],
-      left_name: Optional[Text] = None,
-      right_name: Optional[Text] = None,
-      edge_name: Optional[Text] = None,
-  ) -> Tuple[network_components.BaseNode, network_components.BaseNode]:
-    """Split a `Node` using RQ (reversed QR) decomposition
-
-    Let M be the matrix created by flattening left_edges and right_edges into
-    2 axes. Let :math:`QR = M^*` be the QR Decomposition of 
-    :math:`M^*`. This will split the network into 2 nodes. The left node's 
-    tensor will be :math:`R^*` (a lower triangular matrix) and the right node's tensor will be 
-    :math:`Q^*` (an orthonormal matrix)
-
-    Args:
-      node: The node you want to split.
-      left_edges: The edges you want connected to the new left node.
-      right_edges: The edges you want connected to the new right node.
-      left_name: The name of the new left node. If `None`, a name will be generated
-        automatically.
-      right_name: The name of the new right node. If `None`, a name will be generated
-        automatically.
-      edge_name: The name of the new `Edge` connecting the new left and right node. 
-        If `None`, a name will be generated automatically.
-
-    Returns:
-      A tuple containing:
-        left_node: 
-          A new node created that connects to all of the `left_edges`.
-          Its underlying tensor is :math:`Q`
-        right_node: 
-          A new node created that connects to all of the `right_edges`.
-          Its underlying tensor is :math:`R`
-    """
-    node.reorder_edges(left_edges + right_edges)
-    r, q = self.backend.rq_decomposition(node.tensor, len(left_edges))
-    left_node = self.add_node(r, name=left_name)
-    for i, edge in enumerate(left_edges):
-      left_node.add_edge(edge, i)
-      edge.update_axis(i, node, i, left_node)
-    right_node = self.add_node(q, name=right_name)
-    for i, edge in enumerate(right_edges):
-      # i + 1 to account for the new edge.
-      right_node.add_edge(edge, i + 1)
-      edge.update_axis(i + len(left_edges), node, i + 1, right_node)
-    self.connect(left_node.edges[-1], right_node.edges[0], name=edge_name)
-    self.nodes_set.remove(node)
-    node.disable()
-    return left_node, right_node
-
-  def split_node_full_svd(
-      self,
-      node: network_components.BaseNode,
-      left_edges: List[network_components.Edge],
-      right_edges: List[network_components.Edge],
-      max_singular_values: Optional[int] = None,
-      max_truncation_err: Optional[float] = None,
-      left_name: Optional[Text] = None,
-      middle_name: Optional[Text] = None,
-      right_name: Optional[Text] = None,
-      left_edge_name: Optional[Text] = None,
-      right_edge_name: Optional[Text] = None,
-  ) -> Tuple[network_components.BaseNode, network_components
-             .BaseNode, network_components.BaseNode, Tensor]:
-    """Split a node by doing a full singular value decomposition.
-
-    Let M be the matrix created by flattening left_edges and right_edges into
-    2 axes. Let :math:`U S V^* = M` be the Singular Value Decomposition of 
-    :math:`M`.
-
-    The left most node will be :math:`U` tensor of the SVD, the middle node is
-    the diagonal matrix of the singular values, ordered largest to smallest,
-    and the right most node will be the :math:`V*` tensor of the SVD.
-
-    The singular value decomposition is truncated if `max_singular_values` or
-    `max_truncation_err` is not `None`.
-
-    The truncation error is the 2-norm of the vector of truncated singular
-    values. If only `max_truncation_err` is set, as many singular values will
-    be truncated as possible while maintaining:
-    `norm(truncated_singular_values) <= max_truncation_err`.
-
-    If only `max_singular_values` is set, the number of singular values kept
-    will be `min(max_singular_values, number_of_singular_values)`, so that
-    `max(0, number_of_singular_values - max_singular_values)` are truncated.
-
-    If both `max_truncation_err` and `max_singular_values` are set,
-    `max_singular_values` takes priority: The truncation error may be larger
-    than `max_truncation_err` if required to satisfy `max_singular_values`.
-
-    Args:
-      node: The node you want to split.
-      left_edges: The edges you want connected to the new left node.
-      right_edges: The edges you want connected to the new right node.
-      max_singular_values: The maximum number of singular values to keep.
-      max_truncation_err: The maximum allowed truncation error.
-      left_name: The name of the new left node. If None, a name will be generated
-        automatically.
-      middle_name: The name of the new center node. If None, a name will be generated
-        automatically.
-      right_name: The name of the new right node. If None, a name will be generated
-        automatically.
-      left_edge_name: The name of the new left `Edge` connecting 
-        the new left node (`U`) and the new central node (`S`). 
-        If `None`, a name will be generated automatically.
-      right_edge_name: The name of the new right `Edge` connecting 
-        the new central node (`S`) and the new right node (`V*`). 
-        If `None`, a name will be generated automatically.
-
-    Returns:
-      A tuple containing:
-        left_node: 
-          A new node created that connects to all of the `left_edges`.
-          Its underlying tensor is :math:`U`
-        singular_values_node: 
-          A new node that has 2 edges connecting `left_node` and `right_node`.
-          Its underlying tensor is :math:`S`
-        right_node: 
-          A new node created that connects to all of the `right_edges`.
-          Its underlying tensor is :math:`V^*`
-        truncated_singular_values: 
-          The vector of truncated singular values.
-    """
-    node.reorder_edges(left_edges + right_edges)
-    u, s, vh, trun_vals = self.backend.svd_decomposition(
-        node.tensor, len(left_edges), max_singular_values, max_truncation_err)
-    left_node = self.add_node(u, name=left_name)
-    singular_values_node = self.add_node(self.backend.diag(s), name=middle_name)
-    right_node = self.add_node(vh, name=right_name)
-    for i, edge in enumerate(left_edges):
-      left_node.add_edge(edge, i)
-      edge.update_axis(i, node, i, left_node)
-    for i, edge in enumerate(right_edges):
-      # i + 1 to account for the new edge.
-      right_node.add_edge(edge, i + 1)
-      edge.update_axis(i + len(left_edges), node, i + 1, right_node)
-    self.connect(
-        left_node.edges[-1], singular_values_node.edges[0], name=left_edge_name)
-    self.connect(
-        singular_values_node.edges[1],
-        right_node.edges[0],
-        name=right_edge_name)
-    self.nodes_set.remove(node)
-    node.disable()
-    return left_node, singular_values_node, right_node, trun_vals
-
-  def remove_node(self, node: network_components.BaseNode
-                 ) -> Tuple[Dict[Text, network_components
-                                 .Edge], Dict[int, network_components.Edge]]:
-    """Remove a node from the network.
-
-    Args:
-      node: The node to be removed.
-
-    Returns:
-      broken_edges_by_name: A Dictionary mapping `node`'s axis names to
-        the newly broken edges.
-      broken_edges_by_axis: A Dictionary mapping `node`'s axis numbers
-        to the newly broken edges.
-
-    Raises:
-      ValueError: If the node isn't in the network.
-    """
-    raise NotImplementedError()
-    if node not in self:
-      raise ValueError("Node '{}' is not in the network.".format(node))
-    broken_edges_by_name = {}
-    broken_edges_by_axis = {}
-    for i, name in enumerate(node.axis_names):
-      if not node.edges[i].is_dangling() and not node.edges[i].is_trace():
-        edge1, edge2 = self.disconnect(node.edges[i])
-        new_broken_edge = edge1 if edge1.node1 is not node else edge2
-        broken_edges_by_axis[i] = new_broken_edge
-        broken_edges_by_name[name] = new_broken_edge
-    self.nodes_set.remove(node)
-    node.disable()
-    return broken_edges_by_name, broken_edges_by_axis
-
-  def check_correct(self, check_connected: bool = True) -> None:
-    """Check that the network is structured correctly.
-
-    Args:
-      check_connected: Check if the network is connected.
-
-    Raises:
-      ValueError: If the tensor network is not correctly structured.
-    """
-    raise NotImplementedError()
-    for node in self.nodes_set:
-      for i, edge in enumerate(node.edges):
-        if edge.node1 is not node and edge.node2 is not node:
-          raise ValueError("Edge '{}' does not connect to node '{}'."
-                           "Edge's nodes: '{}', '{}'.".format(
-                               edge, node, edge.node1, edge.node2))
-
-        is_edge_node_consistent = False
-        if edge.node1 is node:
-          if edge.axis1 == i:
-            is_edge_node_consistent = True
-        if edge.node2 is node:
-          if edge.axis2 == i:
-            is_edge_node_consistent = True
-        if not is_edge_node_consistent:
-          raise ValueError(
-              "Edge '{}' does not point to '{}' on the correct axis. "
-              "Edge axes: {}, {}. Node axis: {}.".format(
-                  edge, node, edge.axis1, edge.axis2, i))
-    if check_connected:
-      self.check_connected()
-
-  def save(self, path: Union[str, BinaryIO]):
-    """Serialize the network to disk in hdf5 format.
-
-    Args:
-      path: path to folder where network is saved.
-    """
-    with h5py.File(path, 'w') as net_file:
-      net_file.create_dataset('backend', data=self.backend.name)
-      nodes_group = net_file.create_group('nodes')
-      edges_group = net_file.create_group('edges')
-
-      for node in self.nodes_set:
-        node_group = nodes_group.create_group(node.name)
-        node._save_node(node_group)
-
-        for edge in node.edges:
-          if edge.node1 == node:
-            edge_group = edges_group.create_group(edge.name)
-            edge._save_edge(edge_group)
 
   def __contains__(self, item):
     if isinstance(item, network_components.Edge):
