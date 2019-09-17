@@ -1051,7 +1051,31 @@ def split_node_full_svd(
   return left_node, singular_values_node, right_node, trun_vals
 
 
-def reachable(
+def reachable(node: network_components.BaseNode,
+              strategy: Optional[Text] = 'recursive'
+             ) -> List[network_components.BaseNode]:
+  """
+  Computes all nodes reachable from `node` by connected edges.
+  Args:
+    node: A `BaseNode`
+    strategy: The strategy to be used to find all nodes. Currently 
+      if `recursive`, use a recursive approach, if `iterative`, use
+      and iterative approach.
+  Returns:
+    A list of `BaseNode` objects that can be reached from `node`
+    via connected edges.
+  Raises:
+    ValueError: If an unknown value for `strategy` is passed.
+  """
+  if strategy == 'recursive':
+    return reachable_recursive(node)
+  elif strategy == 'iterative':
+    return reachable_iterative(node)
+  else:
+    raise ValueError("Unknown value '{}' for `strategy`.".format(strategy))
+
+
+def reachable_recursive(
     node: network_components.BaseNode) -> List[network_components.BaseNode]:
   """
   Computes all nodes reachable from `node` by connected edges. This function uses 
@@ -1063,8 +1087,6 @@ def reachable(
     via connected edges.
 
   """
-  #TODO: this is recursive; use while loop for better performance
-  #also, for large networks this might exceed the maximum recursion depth
   reachable_nodes = []
 
   def _reachable(node):
@@ -1082,38 +1104,38 @@ def reachable(
   return reachable_nodes
 
 
- def reachable_iterative(
-     node: network_components.BaseNode) -> List[network_components.BaseNode]:
-   """
-   Computes all nodes reachable from `node` by connected edges.
-   Args:
-     node: A `BaseNode`
-   Returns:
-     A list of `BaseNode` objects that can be reached from `node`
-     via connected edges.
+def reachable_iterative(
+    node: network_components.BaseNode) -> List[network_components.BaseNode]:
+  """
+  Computes all nodes reachable from `node` by connected edges. This function uses 
+  an iterative strategy.
+  Args:
+    node: A `BaseNode`
+  Returns:
+    A list of `BaseNode` objects that can be reached from `node`
+    via connected edges.
+  """
+  #TODO: this is recursive; use while loop for better performance
+  reachable_nodes = []
+  depth = 0
+  while True:
+    old_depth = depth
+    for edge in node.edges:
 
-   """
-   #TODO: this is recursive; use while loop for better performance
-   reachable_nodes = []
-   depth = 0
-   while True:
-     old_depth = depth
-     for edge in node.edges:
+      if edge.is_dangling():
+        continue
+      next_node = edge.node1 if edge.node1 is not node else edge.node2
+      if next_node in reachable_nodes:
+        continue
+      reachable_nodes.append(next_node)
+      depth += 1
+      node = next_node
+      continue
 
-       if edge.is_dangling():
-         continue
-       next_node = edge.node1 if edge.node1 is not node else edge.node2
-       if next_node in reachable_nodes:
-         continue
-       reachable_nodes.append(next_node)
-       depth += 1
-       node = next_node
-       continue
-
-     depth -= 1 if depth == old_depth else 0
-     if depth == 0:
-       break
-   return reachable_nodes
+    depth -= 1 if depth == old_depth else 0
+    if depth == 0:
+      break
+  return reachable_nodes
 
 
 class TensorNetwork:
