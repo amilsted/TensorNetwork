@@ -95,6 +95,12 @@ class BaseNode(ABC):
 
     super().__init__()
 
+  @property
+  def dtype(self):
+    if self.backend:
+      return self.backend.dtype
+    return None
+
   def set_signature(self, signature: int) -> None:
     """Set the signature for the node.
 
@@ -438,6 +444,16 @@ class BaseNode(ABC):
         dtype=string_type,
         data=np.array([edge.name for edge in self.edges], dtype=object))
 
+  def fresh_edges(self, axis_names: Optional[List[Text]] = None):
+    new_edges = []
+    if not axis_names:
+      axis_names = self.axis_names
+    if not axis_names:
+      axis_names = [str(i) for i in range(len(self.shape))]
+    for i, edge in enumerate(self.edges):
+      new_edge = Edge(node1=self, axis1=i, name=axis_names[i])
+      self.add_edge(new_edge, i, True)
+
 
 class Node(BaseNode):
   """Node for the TensorNetwork graph.
@@ -469,7 +485,8 @@ class Node(BaseNode):
         either a numpy array or a tensorflow tensor.
       name: Name of the node. Used primarily for debugging.
       axis_names: List of names for each of the tensor's axes.
-      network: The TensorNetwork this Node belongs to.
+      backend: The name of the backend.
+      dtype: A dtype of the Node (it has to match tensor.dtype)
 
     Raises:
       ValueError: If there is a repeated name in `axis_names` or if the length
@@ -541,16 +558,6 @@ class Node(BaseNode):
     node.set_signature(signature)
     return node
 
-  def fresh_edges(self, axis_names: Optional[List[Text]] = None):
-    new_edges = []
-    if not axis_names:
-      axis_names = self.axis_names
-    if not axis_names:
-      axis_names = [str(i) for i in range(len(self.shape))]
-    for i, edge in enumerate(self.edges):
-      new_edge = Edge(node1=self, axis1=i, name=axis_names[i])
-      self.add_edge(new_edge, i, True)
-
 
 class CopyNode(BaseNode):
 
@@ -564,8 +571,15 @@ class CopyNode(BaseNode):
 
     self.rank = rank
     self.dimension = dimension
-    self.dtype = dtype
     self._tensor = None
+    if dtype is None:
+      dtype = config.default_dtype
+    # backend.dtype is initialized from config.py (currently `None`)
+    # if `backend.dtype = None`, the backend dtype is set to the type
+    # of `tensor`.
+    if backend is None:
+      backend = config.default_backend
+    backend = backend_factory.get_backend(backend, dtype)
 
     super().__init__(
         name=name,
