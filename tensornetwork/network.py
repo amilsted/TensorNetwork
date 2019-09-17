@@ -549,6 +549,23 @@ def contract_between(
   return new_node
 
 
+def contract_parallel(
+    edge: network_components.Edge) -> network_components.BaseNode:
+  """Contract all edges parallel to this edge.
+
+    This method calls `contract_between` with the nodes connected by the edge.
+
+    Args:
+      edge: The edge to contract.
+
+    Returns:
+      The new node created after contraction.
+    """
+  if edge.is_dangling():
+    raise ValueError("Attempted to contract dangling edge: '{}'".format(edge))
+  return contract_between(edge.node1, edge.node2)
+
+
 def connect(edge1: network_components.Edge,
             edge2: network_components.Edge,
             name: Optional[Text] = None) -> network_components.Edge:
@@ -571,6 +588,7 @@ def connect(edge1: network_components.Edge,
   node2 = edge2.node1
   axis1_num = node1.get_axis_number(edge1.axis1)
   axis2_num = node2.get_axis_number(edge2.axis1)
+
   #we have to check if node1[axis1_num] is already connected to
   #another node or not. If yes, we break the connection
   #and update node1 and the other node
