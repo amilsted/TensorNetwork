@@ -25,7 +25,7 @@ from abc import ABC, abstractmethod
 import h5py
 import tensornetwork
 import tensornetwork.network as tensor_network
-from tensornetwork import config
+import tensornetwork.config as config
 from tensornetwork.backends import backend_factory
 
 string_type = h5py.special_dtype(vlen=str)
@@ -564,7 +564,7 @@ class CopyNode(BaseNode):
                name: Optional[Text] = None,
                axis_names: Optional[List[Text]] = None,
                backend: Optional["Backend"] = None,
-               dtype: Type[np.number] = np.float64) -> None:
+               dtype: Type[np.number] = None) -> None:
 
     self.rank = rank
     self.dimension = dimension
@@ -577,7 +577,6 @@ class CopyNode(BaseNode):
     if backend is None:
       backend = config.default_backend
     backend = backend_factory.get_backend(backend, dtype)
-
     super().__init__(
         name=name,
         axis_names=axis_names,
@@ -598,6 +597,8 @@ class CopyNode(BaseNode):
   def tensor(self) -> Tensor:
     if self._tensor is None:
       copy_tensor = self.make_copy_tensor(self.rank, self.dimension, self.dtype)
+      print(copy_tensor)
+      print(self.backend)
       self._tensor = self.backend.convert_to_tensor(copy_tensor)
     return self._tensor
 
