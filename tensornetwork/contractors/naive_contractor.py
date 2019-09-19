@@ -17,36 +17,45 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-from typing import Sequence, Optional
-from tensornetwork import network
+from typing import Sequence, Optional, Collection
+import tensornetwork as tn
 from tensornetwork import network_components
 
 
-def naive(net: network.TensorNetwork,
-          edge_order: Optional[Sequence[network_components.Edge]] = None
-         ) -> network.TensorNetwork:
-  """Contract a TensorNetwork in the order the edges were created.
+def naive(
+    nodes: Collection[network_components.BaseNode],
+    edge_order: Optional[Sequence[network_components.Edge]] = None,
+) -> network_components.BaseNode:
+  """Contract a network in the order the edges were created.
 
   This contraction method will usually be very suboptimal unless the edges were
   created in a deliberate way.
 
   Args:
-    net: A TensorNetwork.
-    edge_order: An optional list of edges. Must be equal to all non-dangling
-      edges in the net.
+    node: A collection of connected nodes.
+    edge_order: An optional list of non-dangling edges. Must be equal to all non-dangling
+      edges in nodes.
   Returns:
-    The given TensorNetwork with all non-dangling edges contracted.
+    The result of the contraction of all edges.
   Raises:
     ValueError: If the passed `edge_order` list does not contain all of the
       non-dangling edges of the network.
   """
+  nodes_set = {node for node in nodes}
   if edge_order is None:
-    edge_order = sorted(net.get_all_nondangling())
-  if set(edge_order) != net.get_all_nondangling():
+    edge_order = sorted(tn.get_all_nondangling(nodes))
+  if not all([not e.is_dangling() for e in edge_order]):
+    raise ValueError('not all edges are non-dangling')
+  if set(edge_order) != tn.get_all_nondangling(nodes):
     raise ValueError("Set of passed edges does not match expected set."
                      "Given: {}\nExpected: {}".format(
-                         edge_order, net.get_all_nondangling()))
+                         edge_order, tn.get_all_nondangling(nodes)))
   for edge in edge_order:
-    if edge in net:
-      net.contract_parallel(edge)
-  return net
+    if not edge.is_disabled:
+      #keep node1 and node2 alive
+      node1 = edge.node1
+      node2 = edge.node2
+      nodes_set.remove(node1)
+      nodes_set.remove(node2)
+      nodes_set.add(tn.contract_parallel(edge))
+  return list(nodes_set)
