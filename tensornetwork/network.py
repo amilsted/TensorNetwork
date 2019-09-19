@@ -19,7 +19,7 @@ from __future__ import print_function
 import collections
 import h5py
 # pylint: disable=line-too-long
-from typing import Any, Sequence, List, Set, Optional, Union, Text, Tuple, Type, Dict, BinaryIO
+from typing import Any, Sequence, List, Set, Optional, Union, Text, Tuple, Type, Dict, BinaryIO, Collection
 import numpy as np
 import weakref
 from tensornetwork import config
@@ -54,7 +54,7 @@ def get_shared_edges(
 
 
 def _flatten_trace_edges(
-    edges: List[network_components.Edge],
+    edges: Collection[network_components.Edge],
     backend: "Backend",
     new_edge_name: Optional[Text] = None) -> network_components.Edge:
   """Flatten trace edges into single edge.
@@ -88,9 +88,9 @@ def _flatten_trace_edges(
   return new_edge
 
 
-def flatten_edges(edges: List[network_components.Edge],
-                  new_edge_name: Optional[Text] = None
-                 ) -> network_components.Edge:
+def flatten_edges(
+    edges: Collection[network_components.Edge],
+    new_edge_name: Optional[Text] = None) -> network_components.Edge:
   """Flatten edges into single edge.
 
   If two nodes have multiple edges connecting them, it may be
@@ -1118,7 +1118,7 @@ def split_node_full_svd(
 
 def reachable(node: network_components.BaseNode,
               strategy: Optional[Text] = 'recursive'
-             ) -> List[network_components.BaseNode]:
+             ) -> Collection[network_components.BaseNode]:
   """
   Computes all nodes reachable from `node` by connected edges.
   Args:
@@ -1169,8 +1169,8 @@ def reachable_deque(node: network_components.BaseNode) -> None:
   return seen_nodes
 
 
-def reachable_recursive(
-    node: network_components.BaseNode) -> List[network_components.BaseNode]:
+def reachable_recursive(node: network_components.BaseNode
+                       ) -> Collection[network_components.BaseNode]:
   """
   Computes all nodes reachable from `node` by connected edges. This function uses 
   recursion
@@ -1198,8 +1198,8 @@ def reachable_recursive(
   return reachable_nodes
 
 
-def reachable_iterative(
-    node: network_components.BaseNode) -> List[network_components.BaseNode]:
+def reachable_iterative(node: network_components.BaseNode
+                       ) -> Collection[network_components.BaseNode]:
   """
   Computes all nodes reachable from `node` by connected edges. This function uses 
   an iterative strategy.
@@ -1232,7 +1232,7 @@ def reachable_iterative(
   return reachable_nodes
 
 
-def check_correct(nodes: List[network_components.BaseNode],
+def check_correct(nodes: Collection[network_components.BaseNode],
                   check_connections: Optional[bool] = True) -> None:
   """
   Check if the network defined by `nodes` fulfills necessary
@@ -1270,7 +1270,7 @@ def check_correct(nodes: List[network_components.BaseNode],
     check_connected(nodes)
 
 
-def check_connected(nodes: List[network_components.BaseNode]) -> None:
+def check_connected(nodes: Collection[network_components.BaseNode]) -> None:
   """
   Check if all nodes in `nodes` are connected.
   Args:
@@ -1282,6 +1282,15 @@ def check_connected(nodes: List[network_components.BaseNode]) -> None:
   """
   if not (set(nodes) <= reachable_deque(nodes[0])):
     raise ValueError("Non-connected graph")
+
+
+def get_all_nondangling(nodes: Collection[network_components.BaseNode]
+                       ) -> Collection[network_components.Edge]:
+  """Return the set of all non-dangling edges."""
+  edges = set()
+  for node in nodes:
+    edges |= node.get_all_nondangling()
+  return edges
 
 
 class TensorNetwork:
