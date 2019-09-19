@@ -20,7 +20,6 @@ import warnings
 from typing import Any, Sequence, List, Optional, Union, Text, Tuple, Dict
 from tensornetwork import network
 from tensornetwork import network_components
-
 Tensor = Any
 
 
@@ -74,7 +73,10 @@ def ncon(tensors: Sequence[Tensor],
     Returns:
       A `Tensor` resulting from the contraction of the tensor network.
     """
-  tn, con_edges, out_edges = ncon_network(
+  if backend is None:
+    backend = config.default_backend
+
+  nodes, con_edges, out_edges = ncon_network(
       tensors,
       network_structure,
       con_order=con_order,
@@ -85,7 +87,7 @@ def ncon(tensors: Sequence[Tensor],
   con_edges = con_edges[::-1]
   while con_edges:
     nodes_to_contract = con_edges[-1].get_nodes()
-    edges_to_contract = tn.get_shared_edges(*nodes_to_contract)
+    edges_to_contract = network.get_shared_edges(*nodes_to_contract)
 
     # Eat up all parallel edges that are adjacent in the ordering.
     adjacent_parallel_edges = set()
@@ -109,19 +111,36 @@ def ncon(tensors: Sequence[Tensor],
               list(map(str, nodes_to_contract))))
       con_edges = [e for e in con_edges if e not in edges_to_contract]
 
-    if set(nodes_to_contract) == tn.nodes_set:
+    if set(nodes_to_contract) == set(nodes):
       # If this already produces the final output, order the edges
       # here to avoid transposes in some cases.
-      tn.contract_between(
-          *nodes_to_contract,
-          name="con({},{})".format(*nodes_to_contract),
-          output_edge_order=out_edges)
+
+      #protect nodes_to_contract agains
+      #garbage collector
+      node1 = nodes_to_contract[0]
+      node2 = nodes_to_contract[1]
+      nodes.remove(node1)
+      if node2 is not node1:
+        nodes.remove(node2)
+      nodes.add(
+          network.contract_between(
+              *nodes_to_contract,
+              name="con({},{})".format(*nodes_to_contract),
+              output_edge_order=out_edges))
     else:
-      tn.contract_between(
-          *nodes_to_contract, name="con({},{})".format(*nodes_to_contract))
+      #protect nodes_to_contract agains
+      #garbage collector
+      node1 = nodes_to_contract[0]
+      node2 = nodes_to_contract[1]
+      nodes.remove(node1)
+      if node2 is not node1:
+        nodes.remove(node2)
+      nodes.add(
+          network.contract_between(
+              *nodes_to_contract, name="con({},{})".format(*nodes_to_contract)))
 
   # TODO: More efficient ordering of products based on out_edges
-  res_node = tn.outer_product_final_nodes(out_edges)
+  res_node = network.outer_product_final_nodes(nodes, out_edges)
 
   return res_node.tensor
 
@@ -164,7 +183,7 @@ def ncon_network(
   if len(tensors) != len(network_structure):
     raise ValueError('len(tensors) != len(network_structure)')
 
-  tn, edges = _build_network(tensors, network_structure, backend)
+  nodes, edges = _build_network(tensors, network_structure, backend)
 
   if con_order is None:
     try:
@@ -214,23 +233,24 @@ def ncon_network(
           "Output edge {} appears more than once in the network.".format(
               str(e)))
 
-  return tn, con_edges, out_edges
+  return nodes, con_edges, out_edges
 
 
 def _build_network(
     tensors: Sequence[Tensor], network_structure: Sequence[Sequence],
-    backend: Optional[Text]
-) -> Tuple[network.TensorNetwork, Dict[Any, network_components.Edge]]:
-  tn = network.TensorNetwork(backend=backend)
-  nodes = []
+    backend: Text
+) -> Tuple[List[network_components.BaseNode], Dict[Any, network_components
+                                                   .Edge]]:
+  nodes = set()
   edges = {}
   for i, (tensor, edge_lbls) in enumerate(zip(tensors, network_structure)):
     if len(tensor.shape) != len(edge_lbls):
       raise ValueError(
           "Incorrect number of edge labels specified tensor {}".format(i))
 
-    node = tn.add_node(tensor, name="tensor_{}".format(i))
-    nodes.append(node)
+    node = network_components.Node(
+        tensor, name="tensor_{}".format(i), backend=backend)
+    nodes.add(node)
 
     for (axis_num, edge_lbl) in enumerate(edge_lbls):
       if edge_lbl not in edges:
@@ -239,6 +259,6 @@ def _build_network(
         edges[edge_lbl] = e
       else:
         # This will raise an error if the edges are not dangling.
-        e = tn.connect(edges[edge_lbl], node[axis_num], name=str(edge_lbl))
+        e = network.connect(edges[edge_lbl], node[axis_num], name=str(edge_lbl))
         edges[edge_lbl] = e
-  return tn, edges
+  return nodes, edges
