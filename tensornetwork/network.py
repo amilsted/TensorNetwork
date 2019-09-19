@@ -548,7 +548,7 @@ def contract_between(
   shared_edges = get_shared_edges(node1, node2)
   if not shared_edges:
     if allow_outer_product:
-      return outer_product(node1, node2, backend, net)
+      return outer_product(node1, node2, name=name, axis_names=axis_names)
     raise ValueError("No edges found between nodes '{}' and '{}' "
                      "and allow_outer_product=False.".format(node1, node2))
 
@@ -1309,6 +1309,15 @@ def get_all_nodes(edges: Collection[network_components.Edge]
       nodes |= {edge.node2}
 
   return nodes
+
+
+def get_all_edges(nodes: Collection[network_components.BaseNode]
+                 ) -> Set[network_components.Edge]:
+  """Return the set of edges of all nodes."""
+  edges = set()
+  for node in nodes:
+    edges |= set(node.edges)
+  return edges
 
 
 #Fake class to fix import issues
