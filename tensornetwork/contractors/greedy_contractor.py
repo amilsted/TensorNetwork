@@ -38,24 +38,16 @@ def greedy(nodes: Collection[network_components.BaseNode]
   """
   #we don't want nodes to be garbage collected
   nodes_set = {node for node in nodes}
-
   edges = tn.get_all_nondangling(nodes_set)
-  trace_edges = set()
-  non_trace_edges = set()
   # Seperate out trace edges from non-trace edges
   for edge in edges:
-    if edge.is_trace():
-      trace_edges.add(edge)
+    if not edge.is_disabled:  #if its disabled we already contracted it
+      if edge.is_trace():
+        nodes_set.remove(edge.node1)
+        nodes_set.add(tn.contract_parallel(edge))
 
-  # Contract trace edges
-  for edge in trace_edges:
-    # replace contracted node in nodes_set
-    # edge.node1 is still referenced in `nodes`
-    # and is not garbage collected
-    nodes_set.remove(edge.node1)
-    nodes_set.add(tn.contract(edge))
 
-  # Get the edges again.
+# Get the edges again.
   edges = tn.get_all_nondangling(nodes_set)
   while edges:
     edge = min(edges, key=lambda x: (cost_contract_parallel(x), x))
