@@ -20,7 +20,7 @@ from __future__ import print_function
 import numpy as np
 import pytest
 
-from tensornetwork import network
+import tensornetwork as tn
 from tensornetwork.contractors import naive_contractor
 import tensorflow as tf
 tf.enable_v2_behavior()
@@ -28,50 +28,46 @@ naive = naive_contractor.naive
 
 
 def test_sanity_check(backend):
-  net = network.TensorNetwork(backend=backend)
-  a = net.add_node(np.eye(2))
-  b = net.add_node(np.eye(2))
-  c = net.add_node(np.eye(2))
-  net.connect(a[0], b[1])
-  net.connect(b[0], c[1])
-  net.connect(c[0], a[1])
-  result = naive(net).get_final_node()
+  a = tn.Node(np.eye(2), backend=backend)
+  b = tn.Node(np.eye(2), backend=backend)
+  c = tn.Node(np.eye(2), backend=backend)
+  e1 = tn.connect(a[0], b[1])
+  e2 = tn.connect(b[0], c[1])
+  e3 = tn.connect(c[0], a[1])
+  result = naive([a, b, c], edge_order=[e1, e2, e3])[0]
   np.testing.assert_allclose(result.tensor, 2.0)
 
 
 def test_passed_edge_order(backend):
-  net = network.TensorNetwork(backend=backend)
-  a = net.add_node(np.eye(2))
-  b = net.add_node(np.eye(2))
-  c = net.add_node(np.eye(2))
-  e1 = net.connect(a[0], b[1])
-  e2 = net.connect(b[0], c[1])
-  e3 = net.connect(c[0], a[1])
-  result = naive(net, [e3, e1, e2]).get_final_node()
+  a = tn.Node(np.eye(2), backend=backend)
+  b = tn.Node(np.eye(2), backend=backend)
+  c = tn.Node(np.eye(2), backend=backend)
+  e1 = tn.connect(a[0], b[1])
+  e2 = tn.connect(b[0], c[1])
+  e3 = tn.connect(c[0], a[1])
+  result = naive([a, b, c], [e3, e1, e2])[0]
   np.testing.assert_allclose(result.tensor, 2.0)
 
 
 def test_bad_passed_edges(backend):
-  net = network.TensorNetwork(backend=backend)
-  a = net.add_node(np.eye(2))
-  b = net.add_node(np.eye(2))
-  c = net.add_node(np.eye(2))
-  e1 = net.connect(a[0], b[1])
-  e2 = net.connect(b[0], c[1])
-  _ = net.connect(c[0], a[1])
+  a = tn.Node(np.eye(2), backend=backend)
+  b = tn.Node(np.eye(2), backend=backend)
+  c = tn.Node(np.eye(2), backend=backend)
+  e1 = tn.connect(a[0], b[1])
+  e2 = tn.connect(b[0], c[1])
+  _ = tn.connect(c[0], a[1])
   with pytest.raises(ValueError):
-    naive(net, [e1, e2])
+    naive([a, b, c], [e1, e2])
 
 
 def test_precontracted_network(backend):
-  net = network.TensorNetwork(backend=backend)
-  a = net.add_node(np.eye(2))
-  b = net.add_node(np.eye(2))
-  c = net.add_node(np.eye(2))
-  net.connect(a[0], b[1])
-  net.connect(b[0], c[1])
-  edge = net.connect(c[0], a[1])
-  net.contract(edge)
+  a = tn.Node(np.eye(2), backend=backend)
+  b = tn.Node(np.eye(2), backend=backend)
+  c = tn.Node(np.eye(2), backend=backend)
+  e1 = tn.connect(a[0], b[1])
+  e2 = tn.connect(b[0], c[1])
+  edge = tn.connect(c[0], a[1])
+  node = tn.contract(edge)
   # This should work now!
-  result = naive(net).get_final_node()
+  result = naive([node, b], edge_order=[e1, e2])[0]
   np.testing.assert_allclose(result.tensor, 2.0)
