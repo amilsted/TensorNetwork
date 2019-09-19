@@ -88,10 +88,9 @@ def _flatten_trace_edges(
   return new_edge
 
 
-def flatten_edges(
-    edges: List[network_components.Edge],
-    backend: "Backend",
-    new_edge_name: Optional[Text] = None) -> network_components.Edge:
+def flatten_edges(edges: List[network_components.Edge],
+                  new_edge_name: Optional[Text] = None
+                 ) -> network_components.Edge:
   """Flatten edges into single edge.
 
   If two nodes have multiple edges connecting them, it may be
@@ -115,6 +114,13 @@ def flatten_edges(
     ValueError: If one of the nodes connecting to these edges does not have
       edge definitions for all of its axes.
   """
+  backends = [edge.node1.backend for edge in edges] + [
+      edge.node2.backend for edge in edges if edge.node2 is not None
+  ]
+
+  if not all([b.name == backends[0].name for b in backends]):
+    raise ValueError("Not all backends are the same.")
+  backend = backends[0]
   if not edges:
     raise ValueError("At least 1 edge must be given.")
   if len(edges) == 1:
@@ -170,8 +176,9 @@ def flatten_edges(
 
 
 def flatten_edges_between(
-    node1: network_components.BaseNode, node2: network_components.BaseNode,
-    backend: "Backend") -> Optional[network_components.Edge]:
+    node1: network_components.BaseNode,
+    node2: network_components.BaseNode,
+) -> Optional[network_components.Edge]:
   """Flatten all of the edges between the given two nodes.
 
   Args:
@@ -185,7 +192,7 @@ def flatten_edges_between(
   """
   shared_edges = get_shared_edges(node1, node2)
   if shared_edges:
-    return flatten_edges(list(shared_edges), backend)
+    return flatten_edges(list(shared_edges))
   return None
 
 
@@ -215,7 +222,6 @@ def _remove_trace_edge(edge: network_components.Edge,
   node_edges = edge.node1.edges[:]
   node_edges.pop(axes[0])
   node_edges.pop(axes[1] - 1)
-
   seen_edges = set()
   for tmp_edge in node_edges:
     if tmp_edge in seen_edges:
@@ -238,9 +244,7 @@ def _remove_trace_edge(edge: network_components.Edge,
   for i, e in enumerate(node_edges):
     new_node.add_edge(e, i)
 
-  node = edge.node1  #return reference to edge.node1 for later disabling
-  node.fresh_edges(node.axis_names)
-  return node
+  edge.node1.fresh_edges(edge.node1.axis_names)
 
 
 def _remove_edges(edges: Set[network_components.Edge],
@@ -255,16 +259,13 @@ def _remove_edges(edges: Set[network_components.Edge],
   The nodes that currently share the edges in `edges` must be supplied as
   `node1` and `node2`. The ordering of `node1` and `node2` must match the
   axis ordering of `new_node` (as determined by the contraction procedure).
-  `node1` and `node2` get both a fresh set f edges.
+  `node1` and `node2` get both a fresh set edges.
   Args:
     edges: The edges to contract.
     node1: The old node that supplies the first edges of `new_node`.
     node2: The old node that supplies the last edges of `new_node`.
     new_node: The new node that represents the contraction of the two old
       nodes.
-    add_new_edges: If `True`, all edges of `node1` and `node2` that are not 
-      in `edges` are replaced with new `Edge` objects.
-
   Returns:
     node1, node2L
   Raises:
@@ -351,8 +352,10 @@ def _contract_trace(edge: network_components.Edge,
   return new_node
 
 
-def contract(edge: network_components.Edge,
-             name: Optional[Text] = None) -> network_components.BaseNode:
+def contract(
+    edge: network_components.Edge,
+    name: Optional[Text] = None,
+    axis_names: Optional[List[Text]] = None) -> network_components.BaseNode:
   """
   Contract an edge connecting two nodes in the TensorNetwork.
   All edges of `node1` and `node2` are passed on to the new node, 
@@ -368,7 +371,7 @@ def contract(edge: network_components.Edge,
     ValueError: When edge is a dangling edge or if it already has been
       contracted.
   """
-  for node in [node1, node2]:
+  for node in [edge.node1, edge.node2]:
     if not hasattr(node, 'backend'):
       raise TypeError('Node {} of type {} has no `backend`'.format(
           node, type(node)))
@@ -383,10 +386,12 @@ def contract(edge: network_components.Edge,
     raise ValueError("Attempting to contract dangling edge")
   backend = edge.node1.backend
   if edge.node1 is edge.node2:
-    return _contract_trace(edge, backend, net, name)
+    return _contract_trace(edge, name)
   new_tensor = backend.tensordot(edge.node1.tensor, edge.node2.tensor,
                                  [[edge.axis1], [edge.axis2]])
-  new_node = network_components.FreeNode(new_tensor, name=name)
+  new_node = network_components.Node(
+      tensor=new_tensor, name=name, axis_names=axis_names, backend=backend.name)
+  # edge.node1 and edge.node2 get new edges in _remove_edges
   _remove_edges(set([edge]), edge.node1, edge.node2, new_node)
   return new_node
 
@@ -449,6 +454,44 @@ def outer_product(
   return new_node
 
 
+def contract_copy_node(copy_node: network_components.CopyNode,
+                       name: Optional[Text] = None
+                      ) -> network_components.BaseNode:
+  """Contract all edges incident on given copy node.
+
+  Args:
+    copy_node: Copy tensor node to be contracted.
+    name: Name of the new node created.
+
+  Returns:
+    New node representing contracted tensor.
+
+  Raises:
+    ValueError: If copy_node has dangling edge(s).
+  """
+  new_tensor = copy_node.compute_contracted_tensor()
+  new_node = network_components.Node(
+      new_tensor, name, backend=copy_node.backend.name)
+
+  partners = copy_node.get_partners()
+  new_axis = 0
+  for partner in partners:
+    for edge in partner.edges:
+      if edge.node1 is copy_node or edge.node2 is copy_node:
+        continue
+      old_axis = edge.axis1 if edge.node1 is partner else edge.axis2
+      edge.update_axis(
+          old_node=partner,
+          old_axis=old_axis,
+          new_node=new_node,
+          new_axis=new_axis)
+      new_node.add_edge(edge, new_axis)
+      new_axis += 1
+  assert len(new_tensor.shape) == new_axis
+  copy_node.fresh_edges(copy_node.axis_names)
+  return new_node
+
+
 def contract_between(
     node1: network_components.BaseNode,
     node2: network_components.BaseNode,
@@ -491,11 +534,11 @@ def contract_between(
   backend = node1.backend
 
   if node1 is node2:
-    flat_edge = flatten_edges_between(node1, node2, backend)
+    flat_edge = flatten_edges_between(node1, node2)
     if not flat_edge:
       raise ValueError("No trace edges found on contraction of edges between "
                        "node '{}' and itself.".format(node1))
-    return contract(flat_edge, backend, net, name)
+    return contract(flat_edge, name)
 
   shared_edges = get_shared_edges(node1, node2)
   if not shared_edges:
@@ -543,6 +586,7 @@ def contract_between(
   new_tensor = backend.tensordot(node1.tensor, node2.tensor, [axes1, axes2])
   new_node = network_components.Node(
       tensor=new_tensor, name=name, axis_names=axis_names, backend=backend.name)
+  # node1 and node2 get new edges in _remove_edges
   _remove_edges(shared_edges, node1, node2, new_node)
   if output_edge_order:
     new_node = new_node.reorder_edges(list(output_edge_order))
@@ -659,7 +703,10 @@ def conj(
     axis_names = node.axis_names
 
   return network_components.Node(
-      node.tensor, name=name, axis_names=axis_names, backend=backend.name)
+      backend.conj(node.tensor),
+      name=name,
+      axis_names=axis_names,
+      backend=backend.name)
 
 
 def transpose(
@@ -1078,7 +1125,8 @@ def reachable(node: network_components.BaseNode,
     node: A `BaseNode`
     strategy: The strategy to be used to find all nodes. Currently 
       if `recursive`, use a recursive approach, if `iterative`, use
-      and iterative approach.
+      and iterative approach, if 'deque' use an iterative approach 
+      using itertools.deque.
   Returns:
     A list of `BaseNode` objects that can be reached from `node`
     via connected edges.
@@ -1089,8 +1137,36 @@ def reachable(node: network_components.BaseNode,
     return reachable_recursive(node)
   elif strategy == 'iterative':
     return reachable_iterative(node)
+  elif strategy == 'deque':
+    return reachable_deque(node)
+
   else:
     raise ValueError("Unknown value '{}' for `strategy`.".format(strategy))
+
+
+def reachable_deque(node: network_components.BaseNode) -> None:
+  """
+  Computes all nodes reachable from `node` by connected edges. This function uses 
+  itertools.deque.
+  Args:
+    node: A `BaseNode`
+  Returns:
+    A set of `BaseNode` objects that can be reached from `node`
+    via connected edges.
+
+  """
+  # Fastest way to get a single item from a set.
+  node_que = collections.deque()
+  seen_nodes = {node}
+  node_que.append(node)
+  while node_que:
+    node = node_que.popleft()
+    for e in node.edges:
+      for n in e.get_nodes():
+        if n is not None and n not in seen_nodes:
+          node_que.append(n)
+          seen_nodes.add(n)
+  return seen_nodes
 
 
 def reachable_recursive(
@@ -1101,11 +1177,11 @@ def reachable_recursive(
   Args:
     node: A `BaseNode`
   Returns:
-    A list of `BaseNode` objects that can be reached from `node`
+    A set of `BaseNode` objects that can be reached from `node`
     via connected edges.
 
   """
-  reachable_nodes = []
+  reachable_nodes = {node}
 
   def _reachable(node):
     for edge in node.edges:
@@ -1114,7 +1190,7 @@ def reachable_recursive(
       next_node = edge.node1 if edge.node1 is not node else edge.node2
       if next_node in reachable_nodes:
         continue
-      reachable_nodes.append(next_node)
+      reachable_nodes.add(next_node)
       _reachable(next_node)
 
   _reachable(node)
@@ -1134,7 +1210,7 @@ def reachable_iterative(
     via connected edges.
   """
   #TODO: this is recursive; use while loop for better performance
-  reachable_nodes = []
+  reachable_nodes = {node}
   depth = 0
   while True:
     old_depth = depth
@@ -1145,7 +1221,7 @@ def reachable_iterative(
       next_node = edge.node1 if edge.node1 is not node else edge.node2
       if next_node in reachable_nodes:
         continue
-      reachable_nodes.append(next_node)
+      reachable_nodes.add(next_node)
       depth += 1
       node = next_node
       continue
@@ -1157,15 +1233,19 @@ def reachable_iterative(
 
 
 def check_correct(nodes: List[network_components.BaseNode],
-                  check_connected: bool = True) -> None:
-  """Check that the network is structured correctly.
+                  check_connections: Optional[bool] = True) -> None:
+  """
+  Check if the network defined by `nodes` fulfills necessary
+  consistency relations.
 
   Args:
     nodes: A list of `BaseNode` objects.
     check_connected: Check if the network is connected.
-
+  Returns:
+    None
   Raises:
-    ValueError: If the tensor network is not correctly structured.
+    ValueError: If the network defined by `nodes` is not 
+      correctly structured.
   """
   for node in nodes:
     for i, edge in enumerate(node.edges):
@@ -1186,25 +1266,21 @@ def check_correct(nodes: List[network_components.BaseNode],
             "Edge '{}' does not point to '{}' on the correct axis. "
             "Edge axes: {}, {}. Node axis: {}.".format(edge, node, edge.axis1,
                                                        edge.axis2, i))
-  if check_connected:
-    check_connected()
+  if check_connections:
+    check_connected(nodes)
 
 
 def check_connected(nodes: List[network_components.BaseNode]) -> None:
-  """Check if the network is connected."""
-  # Fastest way to get a single item from a set.
-  node = next(iter(nodes))
-  node_que = collections.deque()
-  seen_nodes = {node}
-  node_que.append(node)
-  while node_que:
-    node = node_que.popleft()
-    for e in node.edges:
-      for n in e.get_nodes():
-        if n is not None and n not in seen_nodes:
-          node_que.append(n)
-          seen_nodes.add(n)
-  if nodes != seen_nodes:
+  """
+  Check if all nodes in `nodes` are connected.
+  Args:
+    nodes: A list of nodes.
+  Returns:
+    None:
+  Raises:
+    ValueError: If not all nodes in `nodes` are connected.
+  """
+  if not (set(nodes) <= reachable_deque(nodes[0])):
     raise ValueError("Non-connected graph")
 
 
