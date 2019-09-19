@@ -24,7 +24,7 @@ from typing import Any, Optional, Sequence, Collection
 def base(nodes: Collection[network_components.BaseNode],
          algorithm: utils.Algorithm,
          output_edge_order: Optional[Sequence[network_components.Edge]] = None
-        ) -> Collection[network_components.BaseNode]:
+        ) -> network_components.BaseNode:
   """Base method for all `opt_einsum` contractors.
 
   Args:
