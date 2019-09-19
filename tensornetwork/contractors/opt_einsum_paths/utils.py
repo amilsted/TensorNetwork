@@ -15,11 +15,11 @@
 
 from tensornetwork import network
 from tensornetwork import network_components
-from typing import Any, Callable, Dict, List, Set, Tuple
+from typing import Any, Callable, Dict, List, Set, Tuple, Collection
 
 # `opt_einsum` algorithm method typing
-Algorithm = Callable[[List[Set[int]], Set[int], Dict[int, int]],
-                     List[Tuple[int, int]]]
+Algorithm = Callable[[List[Set[int]], Set[int], Dict[int, int]], List[
+    Tuple[int, int]]]
 
 
 def multi_remove(elems: List[Any], indices: List[int]) -> List[Any]:
@@ -27,22 +27,22 @@ def multi_remove(elems: List[Any], indices: List[int]) -> List[Any]:
   return [i for j, i in enumerate(elems) if j not in indices]
 
 
-def get_path(net: network.TensorNetwork, algorithm: Algorithm
-             ) -> Tuple[List[Tuple[int, int]],
-                        List[network_components.BaseNode]]:
+def get_path(
+    nodes: Collection[network_components.BaseNode], algorithm: Algorithm
+) -> Tuple[List[Tuple[int, int]], List[network_components.BaseNode]]:
   """Calculates the contraction paths using `opt_einsum` methods.
 
   Args:
-    net: TensorNetwork object to contract.
+    nodes: A collection of nodes.
     algorithm: `opt_einsum` method to use for calculating the contraction path.
 
   Returns:
     The optimal contraction path as returned by `opt_einsum`.
   """
-  sorted_nodes = sorted(net.nodes_set, key=lambda n: n.signature)
+  sorted_nodes = sorted(nodes, key=lambda n: n.signature)
 
   input_sets = [set(node.edges) for node in sorted_nodes]
-  output_set = net.get_all_edges() - net.get_all_nondangling()
-  size_dict = {edge: edge.dimension for edge in net.get_all_edges()}
+  output_set = network.get_all_edges(nodes) - network.get_all_nondangling(nodes)
+  size_dict = {edge: edge.dimension for edge in network.get_all_edges(nodes)}
 
   return algorithm(input_sets, output_set, size_dict), sorted_nodes
