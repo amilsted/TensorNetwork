@@ -54,7 +54,7 @@ def get_shared_edges(
 
 
 def _flatten_trace_edges(
-    edges: Collection[network_components.Edge],
+    edges: List[network_components.Edge],
     backend: "Backend",
     new_edge_name: Optional[Text] = None) -> network_components.Edge:
   """Flatten trace edges into single edge.
@@ -85,12 +85,13 @@ def _flatten_trace_edges(
       node1=node, axis1=len(perm_front) + 1, name="TraceBack")
   node.edges = node.edges[:len(perm_front)] + [edge1, edge2]
   new_edge = connect(edge1, edge2, new_edge_name)
+  [edge.disable() for edge in edges]  #disable edges!
   return new_edge
 
 
-def flatten_edges(
-    edges: Collection[network_components.Edge],
-    new_edge_name: Optional[Text] = None) -> network_components.Edge:
+def flatten_edges(edges: List[network_components.Edge],
+                  new_edge_name: Optional[Text] = None
+                 ) -> network_components.Edge:
   """Flatten edges into single edge.
 
   If two nodes have multiple edges connecting them, it may be
@@ -136,7 +137,7 @@ def flatten_edges(
               edges[0], edges[0].node1, edges[0].node2, edge, edge.node1,
               edge.node2))
   if len(expected_nodes) == 1:
-    return _flatten_trace_edges(edges, backend, new_edge_name)
+    return _flatten_trace_edges(edges, backend, new_edge_name)  #disables edges
   # Flatten standard or dangling edges.
   new_dangling_edges = []
   for node in expected_nodes:
@@ -170,8 +171,10 @@ def flatten_edges(
   node1, node2 = tuple(expected_nodes)
   # Sets are returned in a random order, so this is how we deal with
   # dangling edges.
+  [edge.disable() for edge in edges]  #disable edges!
   if node1 is None or node2 is None:
     return new_dangling_edges[0]
+
   return connect(new_dangling_edges[0], new_dangling_edges[1], new_edge_name)
 
 
@@ -198,7 +201,7 @@ def flatten_edges_between(
 
 def _remove_trace_edge(edge: network_components.Edge,
                        new_node: network_components.BaseNode) -> None:
-  """Collapse a trace edge.
+  """Collapse a trace edge. `edge` is disabled before returning.
 
   Take a trace edge (i.e. with edge.node1 = edge.node2),
   remove it, update the axis numbers of all remaining edges
@@ -243,8 +246,8 @@ def _remove_trace_edge(edge: network_components.Edge,
   # Update edges for the new node.
   for i, e in enumerate(node_edges):
     new_node.add_edge(e, i)
-
   edge.node1.fresh_edges(edge.node1.axis_names)
+  edge.disable()  #disabled edge!
 
 
 def _remove_edges(edges: Set[network_components.Edge],
@@ -260,6 +263,7 @@ def _remove_edges(edges: Set[network_components.Edge],
   `node1` and `node2`. The ordering of `node1` and `node2` must match the
   axis ordering of `new_node` (as determined by the contraction procedure).
   `node1` and `node2` get both a fresh set edges.
+  `edges` are disabled before returning.
   Args:
     edges: The edges to contract.
     node1: The old node that supplies the first edges of `new_node`.
@@ -315,12 +319,13 @@ def _remove_edges(edges: Set[network_components.Edge],
 
   node1.fresh_edges(node1_axis_names)
   node2.fresh_edges(node2_axis_names)
+  [edge.disable() for edge in edges]  #disabled edges!
 
 
 def _contract_trace(edge: network_components.Edge,
                     name: Optional[Text] = None) -> network_components.BaseNode:
   """Contract a trace edge.
-
+  `edge` is disabled before returning.
   Args:
     edge: The edge name or object to contract next.
     net: An optional TensorNetwork
@@ -348,7 +353,7 @@ def _contract_trace(edge: network_components.Edge,
 
   new_node = network_components.Node(
       new_tensor, name=name, backend=backend.name)
-  _remove_trace_edge(edge, new_node)
+  _remove_trace_edge(edge, new_node)  #disables edge
   return new_node
 
 
@@ -360,6 +365,7 @@ def contract(
   Contract an edge connecting two nodes in the TensorNetwork.
   All edges of `node1` and `node2` are passed on to the new node, 
   and `node1` and `node2` get a new set of dangling edges.
+  `edge is disabled before returning.
   Args:
     edge: The edge contract next.
     name: Name of the new node created.
@@ -526,13 +532,12 @@ def contract_between(
       raise TypeError('Node {} of type {} has no `backend`'.format(
           node, type(node)))
 
-  # Trace edges cannot be contracted using tensordot.
   if node1.backend.name != node2.backend.name:
     raise ValueError("node {}  and node {} have different backends. "
                      "Cannot perform outer product".format(node1, node2))
 
   backend = node1.backend
-
+  # Trace edges cannot be contracted using tensordot.
   if node1 is node2:
     flat_edge = flatten_edges_between(node1, node2)
     if not flat_edge:
@@ -1232,7 +1237,7 @@ def reachable_iterative(node: network_components.BaseNode
   return reachable_nodes
 
 
-def check_correct(nodes: Collection[network_components.BaseNode],
+def check_correct(nodes: List[network_components.BaseNode],
                   check_connections: Optional[bool] = True) -> None:
   """
   Check if the network defined by `nodes` fulfills necessary
@@ -1270,7 +1275,7 @@ def check_correct(nodes: Collection[network_components.BaseNode],
     check_connected(nodes)
 
 
-def check_connected(nodes: Collection[network_components.BaseNode]) -> None:
+def check_connected(nodes: List[network_components.BaseNode]) -> None:
   """
   Check if all nodes in `nodes` are connected.
   Args:
@@ -1285,9 +1290,29 @@ def check_connected(nodes: Collection[network_components.BaseNode]) -> None:
 
 
 def get_all_nondangling(nodes: Collection[network_components.BaseNode]
-                       ) -> Collection[network_components.Edge]:
+                       ) -> Set[network_components.Edge]:
   """Return the set of all non-dangling edges."""
   edges = set()
   for node in nodes:
     edges |= node.get_all_nondangling()
   return edges
+
+
+def get_all_nodes(edges: Collection[network_components.Edge]
+                 ) -> Set[network_components.BaseNode]:
+  """Return the set of nodes connected to edges."""
+  nodes = set()
+  for edge in edges:
+    if edge.node1 is not None:
+      nodes |= {edge.node1}
+    if edge.node2 is not None:
+      nodes |= {edge.node2}
+
+  return nodes
+
+
+#Fake class to fix import issues
+class TensorNetwork:
+
+  def __init__(self):
+    pass
