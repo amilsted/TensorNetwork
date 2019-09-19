@@ -402,6 +402,35 @@ def contract(
   return new_node
 
 
+def outer_product_final_nodes(
+    nodes: Collection[network_components.BaseNode],
+    edge_order: List[network_components.Edge]) -> network_components.BaseNode:
+  """Get the outer product of `nodes`
+
+  For example, if there are 3 nodes remaining in `nodes` with 
+  shapes :math:`(2, 3)`, :math:`(4, 5, 6)`, and :math:`(7)`
+  respectively, the newly returned node will have shape 
+  :math:`(2, 3, 4, 5, 6, 7)`.
+
+  Args:
+    edge_order: Edge order for the final node.
+
+  Returns:
+    The outer product of the remaining nodes.
+
+  Raises:
+    ValueError: If any of the remaining nodes are not fully contracted.
+  """
+  nodes = list(nodes)
+  for node in nodes:
+    if node.has_nondangling_edge():
+      raise ValueError("Node '{}' has a non-dangling edge remaining.")
+  final_node = nodes[0]
+  for node in nodes[1:]:
+    final_node = outer_product(final_node, node)
+  return final_node.reorder_edges(edge_order)
+
+
 def outer_product(
     node1: network_components.BaseNode,
     node2: network_components.BaseNode,
