@@ -757,8 +757,7 @@ class Edge:
     if (node2 is None) != (axis2 is None):
       raise ValueError(
           "node2 and axis2 must either be both None or both not be None")
-
-    self.disabled = False
+    self.is_disabled = False
     if not name:
       name = '__unnamed_edge__'
     self.name = name
@@ -770,46 +769,51 @@ class Edge:
     self._signature = -1
 
   def disable(self):
-    self.disabled = True
+    self._node1 = None
+    self._node2 = None
+    self.is_disabled = True
+
+  def is_disabled(self):
+    return self._node1() is None
 
   @property
   def axis1(self):
-    if self.disabled:
+    if self.is_disabled:
       raise ValueError(
           'Edge has been disabled, accessing axis1 is no longer possible')
     return self._axis1
 
   @axis1.setter
   def axis1(self, axis1: int) -> None:
-    if self.disabled:
+    if self.is_disabled:
       raise ValueError(
           'Edge has been disabled, setting node1 is no longer possible')
     self._axis1 = axis1
 
   @property
   def axis2(self):
-    if self.disabled:
+    if self.is_disabled:
       raise ValueError(
           'Edge has been disabled, accessing axis2 is no longer possible')
     return self._axis2
 
   @axis2.setter
   def axis2(self, axis2: int) -> None:
-    if self.disabled:
+    if self.is_disabled:
       raise ValueError(
           'Edge has been disabled, setting node1 is no longer possible')
     self._axis2 = axis2
 
   @property
   def signature(self):
-    if self.disabled:
+    if self.is_disabled:
       raise ValueError(
           'Edge has been disabled, accessing signature is no longer possible')
     return self._signature
 
   @signature.setter
   def signature(self, signature: int) -> None:
-    if self.disabled:
+    if self.is_disabled:
       raise ValueError(
           'Edge has been disabled, setting node1 is no longer possible')
     self._signature = signature
@@ -851,7 +855,7 @@ class Edge:
 
   @property
   def node1(self) -> BaseNode:
-    if self.disabled:
+    if self.is_disabled:
       raise ValueError(
           'Edge has been disabled, accessing node1 is no longer possible')
     if self._node1() is None:
@@ -860,7 +864,7 @@ class Edge:
 
   @property
   def node2(self) -> Optional[BaseNode]:
-    if self.disabled:
+    if self.is_disabled:
       raise ValueError(
           'Edge has been disabled, accessing node2 is no longer possible')
     if self._is_dangling:
@@ -871,7 +875,7 @@ class Edge:
 
   @node1.setter
   def node1(self, node: BaseNode) -> None:
-    if self.disabled:
+    if self.is_disabled:
       raise ValueError(
           'Edge has been disabled, setting node1 is no longer possible')
     # pylint: disable=attribute-defined-outside-init
@@ -879,7 +883,7 @@ class Edge:
 
   @node2.setter
   def node2(self, node: Optional[BaseNode]) -> None:
-    if self.disabled:
+    if self.is_disabled:
       raise ValueError(
           'Edge has been disabled, setting node2 is no longer possible')
     # pylint: disable=attribute-defined-outside-init
