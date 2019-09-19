@@ -27,7 +27,7 @@ cost_contract_parallel = cost_calculators.cost_contract_parallel
 
 
 def greedy(nodes: Collection[network_components.BaseNode]
-          ) -> network_components.BaseNode:
+          ) -> List[network_components.BaseNode]:
   """Contract the lowest cost pair of nodes first.
   
   Args:
@@ -60,4 +60,4 @@ def greedy(nodes: Collection[network_components.BaseNode]
     nodes_set.remove(node2)
     nodes_set.add(tn.contract_parallel(edge))
     edges = tn.get_all_nondangling(nodes_set)
-  return nodes_set
+  return list(nodes_set)
