@@ -20,32 +20,29 @@ import numpy as np
 import pytest
 from typing import List, Optional, Tuple
 from tensornetwork.contractors import cost_calculators
-from tensornetwork import network
+import tensornetwork as tn
 
 
 def test_cost_contract_between(backend):
-  net = network.TensorNetwork(backend=backend)
-  a = net.add_node(np.ones((2, 3, 4, 5)))
-  b = net.add_node(np.ones((7, 3, 9, 5)))
-  net.connect(a[1], b[1])
-  net.connect(a[3], b[3])
+  a = tn.Node(np.ones((2, 3, 4, 5)), backend=backend)
+  b = tn.Node(np.ones((7, 3, 9, 5)), backend=backend)
+  tn.connect(a[1], b[1])
+  tn.connect(a[3], b[3])
   cost = cost_calculators.cost_contract_between(a, b)
   assert cost == 2 * 7 * 4 * 9
 
 
 def test_cost_contract_between_no_shared_edges(backend):
-  net = network.TensorNetwork(backend=backend)
-  a = net.add_node(np.ones((2, 3, 4, 5)))
-  b = net.add_node(np.ones((7, 3, 9, 5)))
+  a = tn.Node(np.ones((2, 3, 4, 5)), backend=backend)
+  b = tn.Node(np.ones((7, 3, 9, 5)), backend=backend)
   with pytest.raises(ValueError):
     cost_calculators.cost_contract_between(a, b)
 
 
 def test_cost_contract_parallel(backend):
-  net = network.TensorNetwork(backend=backend)
-  a = net.add_node(np.ones((2, 3, 4, 5)))
-  b = net.add_node(np.ones((7, 3, 9, 5)))
-  net.connect(a[1], b[1])
-  edge = net.connect(a[3], b[3])
+  a = tn.Node(np.ones((2, 3, 4, 5)), backend=backend)
+  b = tn.Node(np.ones((7, 3, 9, 5)), backend=backend)
+  tn.connect(a[1], b[1])
+  edge = tn.connect(a[3], b[3])
   cost = cost_calculators.cost_contract_parallel(edge)
   assert cost == 2 * 7 * 4 * 9
