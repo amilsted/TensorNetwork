@@ -849,3 +849,31 @@ def test_network_backend_dtype_3(backend, dtype):
   be = backend_factory.get_backend(backend, dtype)
   with pytest.raises(TypeError):
     n1 = tn.Node(np.zeros((2, 2)), backend=backend, dtype=dtype)
+
+
+def test_get_all_nodes(backend):
+  nodes = [
+      tn.Node(
+          np.random.rand(2, 2, 2), name='node{}'.format(n), backend=backend)
+      for n in range(20)
+  ]
+  edges = []
+  for n in range(100):
+    n1 = np.random.randint(len(nodes))
+    n2 = np.random.randint(len(nodes))
+    #print(nodes[n1].has_dangling_edge())
+    if n1 == n2:
+      continue
+    if nodes[n1].has_dangling_edge() and nodes[n2].has_dangling_edge():
+      #print(n1,n2)
+      axis1 = np.random.randint(len(nodes[n1].edges))
+      while not nodes[n1].edges[axis1].is_dangling():
+        axis1 = np.random.randint(len(nodes[n1].edges))
+      axis2 = np.random.randint(len(nodes[n2].edges))
+      while not nodes[n2].edges[axis2].is_dangling():
+        axis2 = np.random.randint(len(nodes[n2].edges))
+      edges.append(nodes[n1][axis1] ^ nodes[n2][axis2])
+    else:
+      continue
+  assert {node for node in nodes if node.has_nondangling_edge()
+         } == tn.get_all_nodes(edges)
