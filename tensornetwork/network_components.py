@@ -391,10 +391,6 @@ class BaseNode(ABC):
   def disable(self):
     if self.is_disabled:
       raise ValueError('Node {} is already disabled'.format(self.name))
-    # if self in self.network.nodes_set:
-    #   raise ValueError(
-    #       'Node {} is part of a network. Disabelling not allowed'.format(
-    #           self.name))
     self.is_disabled = True
 
   @classmethod
@@ -853,10 +849,9 @@ class Edge:
     if self.disabled:
       raise ValueError(
           'Edge has been disabled, accessing node1 is no longer possible')
-    val = self._node1()
-    if val is None:
+    if self._node1() is None:
       raise ValueError("node1 for edge '{}' no longer exists.".format(self))
-    return val
+    return self._node1()
 
   @property
   def node2(self) -> Optional[BaseNode]:
@@ -867,7 +862,6 @@ class Edge:
       return None
     if self._node2() is None:
       raise ValueError("node2 for edge '{}' no longer exists.".format(self))
-
     return self._node2()
 
   @node1.setter
@@ -876,7 +870,7 @@ class Edge:
       raise ValueError(
           'Edge has been disabled, setting node1 is no longer possible')
     # pylint: disable=attribute-defined-outside-init
-    self._node1 = weakref.ref(node)  #, on_finalize, node)
+    self._node1 = weakref.ref(node)
 
   @node2.setter
   def node2(self, node: Optional[BaseNode]) -> None:
@@ -993,20 +987,20 @@ class Edge:
     if self.is_dangling():
       raise ValueError("Cannot break dangling edge {}.".format(self))
     if not edge1_name:
-      edge1_name = 'anonymous_edge'
+      edge1_name = '__unnamed_edge__'
     if not edge2_name:
-      edge2_name = 'anonymous_edge'
+      edge2_name = '__unnamed_edge__'
 
     node1 = self.node1
     node2 = self.node2
 
     new_edge1 = Edge(node1=node1, axis1=self.axis1, name=edge1_name)
     new_edge2 = Edge(node1=node2, axis1=self.axis2, name=edge2_name)
-    node1.add_edge(new_edge1, axis1_num, override=True)
-    node2.add_edge(new_edge2, axis2_num, override=True)
+    node1.add_edge(new_edge1, self.axis1, override=True)
+    node2.add_edge(new_edge2, self.axis2, override=True)
     return new_edge1, new_edge2
 
-  def __truediv__(self, other: "Edge") -> "Edge":
+  def __or__(self, other: "Edge") -> "Edge":
     """
     Break apart two edges if they are connected
     """
