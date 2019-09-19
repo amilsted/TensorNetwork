@@ -23,8 +23,7 @@ import numpy as np
 import weakref
 from abc import ABC, abstractmethod
 import h5py
-import tensornetwork
-import tensornetwork.network as tensor_network
+import tensornetwork as tn
 import tensornetwork.config as config
 from tensornetwork.backends import backend_factory
 
@@ -310,6 +309,12 @@ class BaseNode(ABC):
         return True
     return False
 
+  def has_dangling_edge(self):
+    for e in self.edges:
+      if e.is_dangling():
+        return True
+    return False
+
   @overload
   def __getitem__(self, key: slice) -> List["Edge"]:
     pass
@@ -343,7 +348,7 @@ class BaseNode(ABC):
       raise ValueError("Cannot use '@' on disabled node {}.".format(self.name))
     # if other.network is not self.network:
     #   raise ValueError("Cannot use '@' on nodes in different networks.")
-    return tensor_network.contract_between(self, other, self.backend)
+    return tn.contract_between(self, other, self.backend)
 
   @property
   def edges(self):
@@ -955,7 +960,7 @@ class Edge:
     return edge
 
   def __xor__(self, other: "Edge") -> "Edge":
-    return tensor_network.connect(self, other, self.name)
+    return tn.connect(self, other, self.name)
 
   def __lt__(self, other):
     if not isinstance(other, Edge):
