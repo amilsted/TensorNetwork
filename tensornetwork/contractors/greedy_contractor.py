@@ -17,7 +17,8 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Collection
+import tensornetwork as tn
 from tensornetwork import network
 from tensornetwork import network_components
 from tensornetwork.contractors import cost_calculators
@@ -25,24 +26,46 @@ from tensornetwork.contractors import cost_calculators
 cost_contract_parallel = cost_calculators.cost_contract_parallel
 
 
-def greedy(net: network.TensorNetwork) -> network.TensorNetwork:
+def greedy(nodes: Collection[network_components.BaseNode]
+          ) -> network_components.BaseNode:
   """Contract the lowest cost pair of nodes first.
   
   Args:
-    net: The TensorNetwork to contract.
+    node: A set or list of connected nodes.
 
   Returns:
-    The contracted TensorNetwork.
+    The contracted nodes.
   """
-  edges = net.get_all_nondangling()
-  # First, contract all of the trace edges.
+  #we don't want nodes to be garbage collected
+  nodes_set = {node for node in nodes}
+
+  edges = tn.get_all_nondangling(nodes_set)
+  trace_edges = set()
+  non_trace_edges = set()
+  # Seperate out trace edges from non-trace edges
   for edge in edges:
-    if edge in net and edge.is_trace():
-      net.contract_parallel(edge)
+    if edge.is_trace():
+      trace_edges.add(edge)
+
+  # Contract trace edges
+  for edge in trace_edges:
+    # replace contracted node in nodes_set
+    # edge.node1 is still referenced in `nodes`
+    # and is not garbage collected
+    nodes_set.remove(edge.node1)
+    nodes_set.add(tn.contract(edge))
+
   # Get the edges again.
-  edges = net.get_all_nondangling()
+  edges = tn.get_all_nondangling(nodes_set)
   while edges:
     edge = min(edges, key=lambda x: (cost_contract_parallel(x), x))
-    net.contract_parallel(edge)
-    edges = net.get_all_nondangling()
-  return net
+    # replace contracted nodes in nodes_set
+    # we need a reference to prevent the edge-nodes from begin garbage
+    # collected after removing them from the set
+    node1 = edge.node1
+    node2 = edge.node2
+    nodes_set.remove(node1)
+    nodes_set.remove(node2)
+    nodes_set.add(tn.contract_parallel(edge))
+    edges = tn.get_all_nondangling(nodes_set)
+  return nodes_set
