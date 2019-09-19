@@ -348,7 +348,7 @@ class BaseNode(ABC):
       raise ValueError("Cannot use '@' on disabled node {}.".format(self.name))
     # if other.network is not self.network:
     #   raise ValueError("Cannot use '@' on nodes in different networks.")
-    return tn.contract_between(self, other, self.backend)
+    return tn.contract_between(self, other)
 
   @property
   def edges(self):
