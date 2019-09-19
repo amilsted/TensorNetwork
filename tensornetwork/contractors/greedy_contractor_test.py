@@ -20,18 +20,17 @@ import numpy as np
 import pytest
 from typing import List, Optional, Tuple
 from tensornetwork.contractors import greedy_contractor
-from tensornetwork import network
+import tensornetwork as tn
 
 
 def test_greedy_sanity_check(backend):
-  net = network.TensorNetwork(backend=backend)
-  a = net.add_node(np.ones((2, 2, 2, 2, 2)))
-  b = net.add_node(np.ones((2, 2, 2)))
-  c = net.add_node(np.ones((2, 2, 2)))
-  net.connect(a[0], a[1])
-  net.connect(a[2], b[0])
-  net.connect(a[3], c[0])
-  net.connect(b[1], c[1])
-  net.connect(b[2], c[2])
-  node = greedy_contractor.greedy(net).get_final_node()
+  a = tn.Node(np.ones((2, 2, 2, 2, 2)), backend=backend)
+  b = tn.Node(np.ones((2, 2, 2)), backend=backend)
+  c = tn.Node(np.ones((2, 2, 2)), backend=backend)
+  tn.connect(a[0], a[1])
+  tn.connect(a[2], b[0])
+  tn.connect(a[3], c[0])
+  tn.connect(b[1], c[1])
+  tn.connect(b[2], c[2])
+  node = greedy_contractor.greedy([a, b, c])[0]
   np.testing.assert_allclose(node.tensor, np.ones(2) * 32.0)
