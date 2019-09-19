@@ -17,7 +17,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-from typing import Sequence, Optional, Collection
+from typing import Sequence, Optional, Collection, List
 import tensornetwork as tn
 from tensornetwork import network_components
 
@@ -25,7 +25,7 @@ from tensornetwork import network_components
 def naive(
     nodes: Collection[network_components.BaseNode],
     edge_order: Optional[Sequence[network_components.Edge]] = None,
-) -> network_components.BaseNode:
+) -> List[network_components.BaseNode]:
   """Contract a network in the order the edges were created.
 
   This contraction method will usually be very suboptimal unless the edges were
