@@ -400,7 +400,7 @@ class BaseNode(ABC):
 
   @classmethod
   @abstractmethod
-  def _load_node(cls, net: TensorNetwork, node_data: h5py.Group) -> "BaseNode":
+  def _load_node(cls, node_data: h5py.Group) -> "BaseNode":
     return
 
   @classmethod
@@ -416,9 +416,10 @@ class BaseNode(ABC):
     """
     name = node_data['name'][()]
     signature = node_data['signature'][()]
+    backend = node_data['backend'][()]
     shape = node_data['shape'][()]
     axis_names = node_data['axis_names'][()]
-    return name, signature, shape, axis_names
+    return name, signature, shape, axis_names, backend
 
   @abstractmethod
   def _save_node(self, node_group: h5py.Group):
@@ -431,6 +432,7 @@ class BaseNode(ABC):
     """
     node_group.create_dataset('type', data=type(self).__name__)
     node_group.create_dataset('signature', data=self.signature)
+    node_group.create_dataset('backend', data=self.backend.name)
     node_group.create_dataset('name', data=self.name)
     node_group.create_dataset('shape', data=self.shape)
     node_group.create_dataset(
@@ -539,20 +541,22 @@ class Node(BaseNode):
     node_group.create_dataset('tensor', data=self._tensor)
 
   @classmethod
-  def _load_node(cls, net: TensorNetwork, node_data: h5py.Group) -> "BaseNode":
+  def _load_node(cls, node_data: h5py.Group) -> "BaseNode":
     """Add a node to a network based on hdf5 data.
 
     Args:
-      net: The network the node will be added to
       node_data: h5py group that contains the serialized node data
 
     Returns:
       The added node.
     """
-    name, signature, _, axis_names = cls._load_node_data(node_data)
+    name, signature, _, axis_names, backend = cls._load_node_data(node_data)
     tensor = node_data['tensor'][()]
-    node = net.add_node(
-        value=tensor, name=name, axis_names=[ax for ax in axis_names])
+    node = Node(
+        tensor=tensor,
+        name=name,
+        axis_names=[ax for ax in axis_names],
+        backend=backend)
     node.set_signature(signature)
     return node
 
@@ -685,7 +689,7 @@ class CopyNode(BaseNode):
     super()._save_node(node_group)
 
   @classmethod
-  def _load_node(cls, net: TensorNetwork, node_data: h5py.Group) -> "BaseNode":
+  def _load_node(cls, node_data: h5py.Group) -> "BaseNode":
     """Add a node to a network based on hdf5 data.
 
     Args:
@@ -695,12 +699,13 @@ class CopyNode(BaseNode):
     Returns:
       The added node.
     """
-    name, signature, shape, axis_names = cls._load_node_data(node_data)
-    node = net.add_copy_node(
+    name, signature, shape, axis_names, backend = cls._load_node_data(node_data)
+    node = CopyNode(
         name=name,
         axis_names=[ax for ax in axis_names],
         rank=len(shape),
-        dimension=shape[0])
+        dimension=shape[0],
+        backend=backend)
     node.set_signature(signature)
     return node
 
