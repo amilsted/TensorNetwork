@@ -1150,7 +1150,8 @@ def split_node_full_svd(
   return left_node, singular_values_node, right_node, trun_vals
 
 
-def reachable(node: network_components.BaseNode,
+def reachable(nodes: Union[network_components
+                           .BaseNode, Collection[network_components.BaseNode]],
               strategy: Optional[Text] = 'recursive'
              ) -> Collection[network_components.BaseNode]:
   """
@@ -1167,15 +1168,21 @@ def reachable(node: network_components.BaseNode,
   Raises:
     ValueError: If an unknown value for `strategy` is passed.
   """
+  if isinstance(nodes, network_components.BaseNode):
+    nodes = [nodes]
+  reachable_nodes = {nodes[0]}
   if strategy == 'recursive':
-    return reachable_recursive(node)
+    for node in nodes:
+      reachable_nodes |= reachable_recursive(node)
   elif strategy == 'iterative':
-    return reachable_iterative(node)
+    for node in nodes:
+      reachable_nodes |= reachable_iterative(node)
   elif strategy == 'deque':
-    return reachable_deque(node)
-
+    for node in nodes:
+      reachable_nodes |= reachable_deque(node)
   else:
     raise ValueError("Unknown value '{}' for `strategy`.".format(strategy))
+  return reachable_nodes
 
 
 def reachable_deque(node: network_components.BaseNode) -> None:
