@@ -825,6 +825,13 @@ class Edge:
           'Edge has been disabled, accessing its name is no longer possible')
     return self._name
 
+  @name.setter
+  def name(self, name):
+    if self.is_disabled:
+      raise ValueError(
+          'Edge has been disabled, setting its name is no longer possible')
+    self._name = name
+
   @property
   def axis1(self):
     if self.is_disabled:
