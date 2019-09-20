@@ -11,7 +11,7 @@ from tensornetwork import config
 from tensornetwork.backends import backend_factory
 
 from typing import Text, Optional, Type
-from tensornetwork.utils import load
+from tensornetwork.utils import load, save
 
 
 def set_default_backend(backend: Text, dtype: Optional[Type] = None) -> None:
