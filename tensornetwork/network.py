@@ -53,6 +53,20 @@ def get_shared_edges(
   return shared_edges
 
 
+def get_parallel_edges(
+    edge: network_components.Edge) -> Set[network_components.Edge]:
+  """
+  Get all of the edges parallel to the given `edge`.
+  Args:
+    edge: The given edge.
+
+  Returns:
+    A `set` of all of the edges parallel to the given edge 
+    (including the given edge).
+  """
+  return get_shared_edges(edge.node1, edge.node2)
+
+
 def _flatten_trace_edges(
     edges: List[network_components.Edge],
     backend: "Backend",
@@ -95,7 +109,7 @@ def flatten_edges(edges: List[network_components.Edge],
   """Flatten edges into single edge.
 
   If two nodes have multiple edges connecting them, it may be
-  benifitial to flatten these edges into a single edge to avoid having several
+  beneficial to flatten these edges into a single edge to avoid having several
   unnecessary trace edges. This can speed up computation time and reduce
   memory cost.
 
@@ -198,6 +212,22 @@ def flatten_edges_between(
   if shared_edges:
     return flatten_edges(list(shared_edges))
   return None
+
+
+def flatten_all_edges(nodes: Collection[network_components.BaseNode]
+                     ) -> List[network_components.Edge]:
+  """Flatten all edges in the network.
+
+  Returns:
+    A list of all the flattened edges. If there was only one edge between 
+    two given nodes, that original edge is included in this list.
+  """
+  flattened_edges = []
+  for edge in get_all_nondangling(nodes):
+    if not edge.is_disabled:
+      flat_edge = flatten_edges_between(edge.node1, edge.node2)
+      flattened_edges.append(flat_edge)
+  return flattened_edges
 
 
 def _remove_trace_edge(edge: network_components.Edge,
