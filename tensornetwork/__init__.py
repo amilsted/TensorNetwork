@@ -1,6 +1,6 @@
 from __future__ import absolute_import
 from tensornetwork.network_components import Node, Edge, CopyNode, BaseNode
-from tensornetwork.network import conj, transpose, contract, contract_copy_node, contract_between, outer_product, split_node, split_node_qr, split_node_rq, split_node_full_svd, reachable, contract_parallel, check_connected, check_correct, connect, flatten_edges, flatten_edges_between, get_all_nondangling, get_all_nodes, _contract_trace
+from tensornetwork.network import conj, transpose, contract, contract_copy_node, contract_between, outer_product, outer_product_final_nodes, split_node, split_node_qr, split_node_rq, split_node_full_svd, reachable, contract_parallel, check_connected, check_correct, connect, flatten_edges, flatten_all_edges, flatten_edges_between, get_all_nondangling, get_all_nodes, get_all_edges, get_parallel_edges, get_shared_edges, _contract_trace
 #from tensornetwork.network import *
 
 from tensornetwork.ncon_interface import ncon, ncon_network
