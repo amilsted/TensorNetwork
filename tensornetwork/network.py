@@ -378,7 +378,7 @@ def contract(
       contracted.
   """
   for node in [edge.node1, edge.node2]:
-    if not hasattr(node, 'backend'):
+    if (node is not None) and (not hasattr(node, 'backend')):
       raise TypeError('Node {} of type {} has no `backend`'.format(
           node, type(node)))
 
