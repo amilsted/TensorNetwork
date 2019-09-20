@@ -413,6 +413,7 @@ def outer_product_final_nodes(
   :math:`(2, 3, 4, 5, 6, 7)`.
 
   Args:
+    nodes: A collection of nodes.
     edge_order: Edge order for the final node.
 
   Returns:
