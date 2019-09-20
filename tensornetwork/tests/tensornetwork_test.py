@@ -21,7 +21,7 @@ import numpy as np
 import tensorflow as tf
 import torch
 import jax
-from jax.config import configx
+from jax.config import config
 import tensornetwork.network as network
 from tensornetwork.backends import backend_factory
 import tensornetwork.config as config_file
