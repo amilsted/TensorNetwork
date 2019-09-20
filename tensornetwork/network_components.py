@@ -802,7 +802,7 @@ class Edge:
     self.is_disabled = False
     if not name:
       name = '__unnamed_edge__'
-    self.name = name
+    self._name = name
     self.node1 = node1
     self._axis1 = axis1
     self.node2 = node2
@@ -817,6 +817,13 @@ class Edge:
 
   def is_disabled(self):
     return self._node1() is None
+
+  @property
+  def name(self):
+    if self.is_disabled:
+      raise ValueError(
+          'Edge has been disabled, accessing its name is no longer possible')
+    return self._name
 
   @property
   def axis1(self):
