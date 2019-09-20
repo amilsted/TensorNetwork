@@ -522,6 +522,7 @@ class Node(BaseNode):
       ValueError: If there is a repeated name in `axis_names` or if the length
         doesn't match the shape of the tensor.
     """
+
     if backend is None:
       backend = config.default_backend
     backend = backend_factory.get_backend(backend, dtype=None)
