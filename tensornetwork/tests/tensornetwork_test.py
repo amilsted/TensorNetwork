@@ -547,10 +547,10 @@ def test_set_default(backend):
 
 
 def test_copy_tensor(backend):
-  a = tn.Node(np.array([1, 2, 3], dtype=np.float64), backend=backend)
-  b = tn.Node(np.array([10, 20, 30], dtype=np.float64), backend=backend)
-  c = tn.Node(np.array([5, 6, 7], dtype=np.float64), backend=backend)
-  d = tn.Node(np.array([1, -1, 1], dtype=np.float64), backend=backend)
+  a = tn.Node(np.array([1., 2., 3.]), backend=backend)
+  b = tn.Node(np.array([10., 20., 30.]), backend=backend)
+  c = tn.Node(np.array([5., 6., 7.]), backend=backend)
+  d = tn.Node(np.array([1., -1., 1.]), backend=backend)
   cn = tn.CopyNode(rank=4, dimension=3, backend=backend)
   edge1 = tn.connect(a[0], cn[0])
   edge2 = tn.connect(b[0], cn[1])
@@ -572,7 +572,7 @@ def test_copy_tensor(backend):
 @pytest.mark.parametrize('backend', ('numpy', 'jax'))
 def test_copy_tensor_parallel_edges(backend):
   a = tn.Node(np.diag([1., 2, 3]), backend=backend)
-  b = tn.Node(np.array([10, 20, 30], dtype=np.float64), backend=backend)
+  b = tn.Node(np.array([10, 20, 30]), backend=backend)
   cn = tn.CopyNode(rank=3, dimension=3, backend=backend)
   edge1 = tn.connect(a[0], cn[0])
   edge2 = tn.connect(a[1], cn[1])
@@ -590,11 +590,9 @@ def test_copy_tensor_parallel_edges(backend):
 
 
 def test_contract_copy_node_connected_neighbors(backend):
-  a = tn.Node(
-      np.array([[1, 2, 3], [10, 20, 30]], dtype=np.float64), backend=backend)
-  b = tn.Node(
-      np.array([[2, 1, 1], [2, 2, 2]], dtype=np.float64), backend=backend)
-  c = tn.Node(np.array([3, 4, 4], dtype=np.float64), backend=backend)
+  a = tn.Node(np.array([[1, 2, 3], [10, 20, 30]]), backend=backend)
+  b = tn.Node(np.array([[2, 1, 1], [2, 2, 2]]), backend=backend)
+  c = tn.Node(np.array([3, 4, 4]), backend=backend)
   cn = tn.CopyNode(rank=3, dimension=3, backend=backend)
   tn.connect(a[0], b[0])
   tn.connect(a[1], cn[0])
@@ -834,21 +832,11 @@ def test_split_node_qr(backend):
     *list(zip(['pytorch'] * len(torch_dtypes), torch_dtypes)),
     *list(zip(['jax'] * len(jax_dtypes), jax_dtypes)),
 ])
-def test_network_backend_dtype_1(backend, dtype):
+def test_node_backend_dtype_1(backend, dtype):
   be = backend_factory.get_backend(backend, dtype)
-  n1 = tn.Node(be.zeros((2, 2)), backend=backend, dtype=dtype)
+  n1 = tn.Node(be.zeros((2, 2)), backend=backend)
   assert n1.dtype == dtype
   assert n1.tensor.dtype == dtype
-
-
-@pytest.mark.parametrize("backend,dtype", [('numpy', np.float32),
-                                           ('tensorflow', tf.float32),
-                                           ('pytorch', torch.float32),
-                                           ('jax', np.float32)])
-def test_network_backend_dtype_3(backend, dtype):
-  be = backend_factory.get_backend(backend, dtype)
-  with pytest.raises(TypeError):
-    n1 = tn.Node(np.zeros((2, 2)), backend=backend, dtype=dtype)
 
 
 def test_get_all_nodes(backend):
