@@ -115,6 +115,9 @@ def flatten_edges(edges: List[network_components.Edge],
     ValueError: If one of the nodes connecting to these edges does not have
       edge definitions for all of its axes.
   """
+  if not edges:
+    raise ValueError("At least 1 edge must be given.")
+
   backends = [edge.node1.backend for edge in edges] + [
       edge.node2.backend for edge in edges if edge.node2 is not None
   ]
@@ -122,8 +125,6 @@ def flatten_edges(edges: List[network_components.Edge],
   if not all([b.name == backends[0].name for b in backends]):
     raise ValueError("Not all backends are the same.")
   backend = backends[0]
-  if not edges:
-    raise ValueError("At least 1 edge must be given.")
   if len(edges) == 1:
     return edges[0]  # Don't bother with reshaping.
   # Set equality is transitive (a=b, b=c, therefore a=c) so it is only
