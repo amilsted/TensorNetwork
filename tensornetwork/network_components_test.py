@@ -752,10 +752,23 @@ def test_disconnect(backend):
   n1 = Node(np.random.rand(2), backend=backend)
   n2 = Node(np.random.rand(2), backend=backend)
   e = n1[0] ^ n2[0]
-  e.disconnect('left_name', 'right_name')
-
+  assert not e.is_dangling()
+  dangling_edge_1, dangling_edge_2 = e.disconnect('left_name', 'right_name')
+  tn.check_correct([n1, n2], False)
+  assert dangling_edge_1.is_dangling()
+  assert dangling_edge_2.is_dangling()
   assert n1[0].is_dangling()
   assert n2[0].is_dangling()
+  assert n1[0].name == 'left_name'
+  assert n2[0].name == 'right_name'
+  assert n1.get_edge(0) == dangling_edge_1
+  assert n2.get_edge(0) == dangling_edge_2
+
+
+def test_disconnect_dangling_edge_value_error(backend):
+  a = tn.Node(np.eye(2), backend=backend)
+  with pytest.raises(ValueError):
+    a[0].disconnect()
 
 
 def test_broken_edge_contraction(backend):

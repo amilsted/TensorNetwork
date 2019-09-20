@@ -444,6 +444,38 @@ class BaseNode(ABC):
         dtype=string_type,
         data=np.array([edge.name for edge in self.edges], dtype=object))
 
+  # @abstractmethod
+  # def save(self, node_group: h5py.Group, reachable: Set):
+  #   """Abstract method to enable saving nodes to hdf5.
+  #      Only serializing common properties is implemented. Should be
+  #      overwritten by subclasses.
+
+  #   Args:
+  #     node_group: h5py group where data is saved
+  #   """
+  #   reachable.remove(self)
+  #   print(reachable)
+  #   node_group.create_dataset('type', data=type(self).__name__)
+  #   node_group.create_dataset('signature', data=self.signature)
+  #   node_group.create_dataset('backend', data=self.backend.name)
+  #   node_group.create_dataset('name', data=self.name)
+  #   node_group.create_dataset('shape', data=self.shape)
+  #   node_group.create_dataset(
+  #       'axis_names',
+  #       dtype=string_type,
+  #       data=np.array(self.axis_names, dtype=object))
+  #   for n in range(len(self.edges)):
+  #     if self.edges[n].node2 is not self:
+  #       if (self.edges[n].node2 is
+  #           not None) and (self.edges[n].node2 in reachable):
+  #         subgroup = node_group.create_group('edge{}'.format(n))
+  #         self.edges[n].node2.save(subgroup, reachable)
+  #     else:
+  #       if (self.edges[n].node1 is
+  #           not None) and (self.edges[n].node1 in reachable):
+  #         subgroup = node_group.create_group('edge{}'.format(n))
+  #         self.edges[n].node1.save(subgroup, reachable)
+
   def fresh_edges(self, axis_names: Optional[List[Text]] = None):
     new_edges = []
     if not axis_names:
@@ -476,8 +508,7 @@ class Node(BaseNode):
                tensor: Tensor,
                name: Optional[Text] = None,
                axis_names: Optional[List[Text]] = None,
-               backend: Optional[Text] = None,
-               dtype: Optional[Type[np.number]] = None) -> None:
+               backend: Optional[Text] = None) -> None:
     """Create a node for the TensorNetwork.
 
     Args:
@@ -486,20 +517,14 @@ class Node(BaseNode):
       name: Name of the node. Used primarily for debugging.
       axis_names: List of names for each of the tensor's axes.
       backend: The name of the backend.
-      dtype: A dtype of the Node (it has to match tensor.dtype)
 
     Raises:
       ValueError: If there is a repeated name in `axis_names` or if the length
         doesn't match the shape of the tensor.
     """
-    if dtype is None:
-      dtype = config.default_dtype
-    # backend.dtype is initialized from config.py (currently `None`)
-    # if `backend.dtype = None`, the backend dtype is set to the type
-    # of `tensor`.
     if backend is None:
       backend = config.default_backend
-    backend = backend_factory.get_backend(backend, dtype)
+    backend = backend_factory.get_backend(backend, dtype=None)
     self._tensor = backend.convert_to_tensor(tensor)
 
     super().__init__(
@@ -539,6 +564,17 @@ class Node(BaseNode):
     """
     super()._save_node(node_group)
     node_group.create_dataset('tensor', data=self._tensor)
+
+  # def save(self, node_group: h5py.Group, reachable: Set):
+  #   """Abstract method to enable saving nodes to hdf5.
+  #      Only serializing common properties is implemented. Should be
+  #      overwritten by subclasses.
+
+  #   Args:
+  #     node_group: h5py group where data is saved
+  #   """
+  #   node_group.create_dataset('tensor', data=self._tensor)
+  #   super().save(node_group, reachable)
 
   @classmethod
   def _load_node(cls, node_data: h5py.Group) -> "BaseNode":
@@ -938,6 +974,20 @@ class Edge:
       edge_group.create_dataset('axis2', data=self.axis2)
     edge_group.create_dataset('signature', data=self.signature)
     edge_group.create_dataset('name', data=self.name)
+
+  # def save(self, edge_group: h5py.Group, reachable: Set):
+  #   """Method to save an edge to hdf5.
+
+  #   Args:
+  #     edge_group: h5py group where data is saved
+  #   """
+  #   edge_group.create_dataset('axis1', data=self.axis1)
+  #   edge_group.create_dataset('signature', data=self.signature)
+  #   edge_group.create_dataset('name', data=self.name)
+  #   if self.node2 is not None:
+  #     edge_group.create_dataset('axis2', data=self.axis2)
+  #     node_group = edge_group.create_group('node2')
+  #     self.node2.save(node_group)
 
   @classmethod
   def _load_edge(cls, edge_data: h5py.Group, nodes_dict: Dict[Text, BaseNode]):
