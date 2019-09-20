@@ -435,46 +435,18 @@ class BaseNode(ABC):
     node_group.create_dataset('backend', data=self.backend.name)
     node_group.create_dataset('name', data=self.name)
     node_group.create_dataset('shape', data=self.shape)
-    node_group.create_dataset(
-        'axis_names',
-        dtype=string_type,
-        data=np.array(self.axis_names, dtype=object))
+    if self.axis_names:
+      node_group.create_dataset(
+          'axis_names',
+          dtype=string_type,
+          data=np.array(self.axis_names, dtype=object))
+    else:  #couldn't find any documentation on saving None
+      node_group.create_dataset('axis_names', dtype='i', data=123456789)
+
     node_group.create_dataset(
         'edges',
         dtype=string_type,
         data=np.array([edge.name for edge in self.edges], dtype=object))
-
-  # @abstractmethod
-  # def save(self, node_group: h5py.Group, reachable: Set):
-  #   """Abstract method to enable saving nodes to hdf5.
-  #      Only serializing common properties is implemented. Should be
-  #      overwritten by subclasses.
-
-  #   Args:
-  #     node_group: h5py group where data is saved
-  #   """
-  #   reachable.remove(self)
-  #   print(reachable)
-  #   node_group.create_dataset('type', data=type(self).__name__)
-  #   node_group.create_dataset('signature', data=self.signature)
-  #   node_group.create_dataset('backend', data=self.backend.name)
-  #   node_group.create_dataset('name', data=self.name)
-  #   node_group.create_dataset('shape', data=self.shape)
-  #   node_group.create_dataset(
-  #       'axis_names',
-  #       dtype=string_type,
-  #       data=np.array(self.axis_names, dtype=object))
-  #   for n in range(len(self.edges)):
-  #     if self.edges[n].node2 is not self:
-  #       if (self.edges[n].node2 is
-  #           not None) and (self.edges[n].node2 in reachable):
-  #         subgroup = node_group.create_group('edge{}'.format(n))
-  #         self.edges[n].node2.save(subgroup, reachable)
-  #     else:
-  #       if (self.edges[n].node1 is
-  #           not None) and (self.edges[n].node1 in reachable):
-  #         subgroup = node_group.create_group('edge{}'.format(n))
-  #         self.edges[n].node1.save(subgroup, reachable)
 
   def fresh_edges(self, axis_names: Optional[List[Text]] = None):
     new_edges = []
@@ -566,17 +538,6 @@ class Node(BaseNode):
     super()._save_node(node_group)
     node_group.create_dataset('tensor', data=self._tensor)
 
-  # def save(self, node_group: h5py.Group, reachable: Set):
-  #   """Abstract method to enable saving nodes to hdf5.
-  #      Only serializing common properties is implemented. Should be
-  #      overwritten by subclasses.
-
-  #   Args:
-  #     node_group: h5py group where data is saved
-  #   """
-  #   node_group.create_dataset('tensor', data=self._tensor)
-  #   super().save(node_group, reachable)
-
   @classmethod
   def _load_node(cls, node_data: h5py.Group) -> "BaseNode":
     """Add a node to a network based on hdf5 data.
@@ -588,12 +549,13 @@ class Node(BaseNode):
       The added node.
     """
     name, signature, _, axis_names, backend = cls._load_node_data(node_data)
+    if isinstance(axis_names, np.int32) and (axis_names == 123456789):
+      axis_names = None
+    else:
+      axis_names = [ax for ax in axis_names]
     tensor = node_data['tensor'][()]
     node = Node(
-        tensor=tensor,
-        name=name,
-        axis_names=[ax for ax in axis_names],
-        backend=backend)
+        tensor=tensor, name=name, axis_names=axis_names, backend=backend)
     node.set_signature(signature)
     return node
 
