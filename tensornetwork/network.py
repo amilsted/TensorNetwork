@@ -1305,7 +1305,7 @@ def reachable_iterative(node: network_components.BaseNode
   return reachable_nodes
 
 
-def check_correct(nodes: List[network_components.BaseNode],
+def check_correct(nodes: Collection[network_components.BaseNode],
                   check_connections: Optional[bool] = True) -> None:
   """
   Check if the network defined by `nodes` fulfills necessary
@@ -1343,7 +1343,7 @@ def check_correct(nodes: List[network_components.BaseNode],
     check_connected(nodes)
 
 
-def check_connected(nodes: List[network_components.BaseNode]) -> None:
+def check_connected(nodes: Collection[network_components.BaseNode]) -> None:
   """
   Check if all nodes in `nodes` are connected.
   Args:
@@ -1353,7 +1353,7 @@ def check_connected(nodes: List[network_components.BaseNode]) -> None:
   Raises:
     ValueError: If not all nodes in `nodes` are connected.
   """
-  if not (set(nodes) <= reachable_deque(nodes[0])):
+  if not (set(nodes) <= reachable_deque(next(iter(nodes)))):
     raise ValueError("Non-connected graph")
 
 
